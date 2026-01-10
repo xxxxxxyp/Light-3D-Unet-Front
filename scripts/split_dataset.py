@@ -43,11 +43,14 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
         # Use specific patterns for .nii and .nii.gz files
         for pattern in ["*.nii.gz", "*.nii"]:
             for label_file in labels_dir.glob(pattern):
-                # Extract case ID from filename using Path.stem
-                # For .nii.gz files, stem gives us "case_id.nii", so we need to remove .nii
-                case_id = label_file.stem
-                if case_id.endswith('.nii'):
-                    case_id = case_id[:-4]
+                # Extract case ID by removing all NIfTI extensions
+                # For .nii.gz: use with_suffix('') twice to remove .gz then .nii
+                # For .nii: use with_suffix('') once
+                case_id = label_file.name
+                if case_id.endswith('.nii.gz'):
+                    case_id = case_id[:-7]  # Remove '.nii.gz'
+                elif case_id.endswith('.nii'):
+                    case_id = case_id[:-4]  # Remove '.nii'
                 case_ids.add(case_id)
     
     # Verify that corresponding image files exist (images have format: XXXX_*.nii.gz or XXXX_*.nii)
