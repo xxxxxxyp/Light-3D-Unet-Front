@@ -40,24 +40,25 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
     # Extract case IDs from label files (labels have format: XXXX.nii.gz or XXXX.nii)
     labels_dir = data_root / "labels"
     if labels_dir.exists():
-        for label_file in labels_dir.glob("*.nii*"):
-            # Only process .nii and .nii.gz files
-            if label_file.suffix not in ['.nii', '.gz'] or (label_file.suffix == '.gz' and not label_file.stem.endswith('.nii')):
-                continue
-            # Extract case ID from filename using Path.stem
-            # For .nii.gz files, stem gives us "case_id.nii", so we need to remove .nii
-            case_id = label_file.stem
-            if case_id.endswith('.nii'):
-                case_id = case_id[:-4]
-            case_ids.add(case_id)
+        # Use specific patterns for .nii and .nii.gz files
+        for pattern in ["*.nii.gz", "*.nii"]:
+            for label_file in labels_dir.glob(pattern):
+                # Extract case ID from filename using Path.stem
+                # For .nii.gz files, stem gives us "case_id.nii", so we need to remove .nii
+                case_id = label_file.stem
+                if case_id.endswith('.nii'):
+                    case_id = case_id[:-4]
+                case_ids.add(case_id)
     
-    # Verify that corresponding image files exist (images have format: XXXX_0000.nii.gz)
+    # Verify that corresponding image files exist (images have format: XXXX_*.nii.gz or XXXX_*.nii)
     images_dir = data_root / "images"
     valid_cases = []
     if images_dir.exists() and len(case_ids) > 0:
         for case_id in sorted(case_ids):
-            # Look for image file with pattern case_id_*.nii*
-            image_files = list(images_dir.glob(f"{case_id}_*.nii*"))
+            # Look for image file with specific patterns
+            image_files = []
+            for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+                image_files.extend(images_dir.glob(pattern))
             if len(image_files) > 0:
                 valid_cases.append(case_id)
     
