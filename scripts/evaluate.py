@@ -17,6 +17,7 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.metrics import calculate_lesion_metrics, calculate_dsc
+from models.utils import find_case_files
 
 
 def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.0, 4.0)):
@@ -43,12 +44,9 @@ def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.
     
     # Load ground truth label from flat structure
     data_dir = Path(data_dir)
-    labels_dir = data_dir / "labels"
     
     # Find label file for this case
-    label_files = []
-    for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
-        label_files.extend(labels_dir.glob(pattern))
+    label_files = find_case_files(data_dir, case_id, file_type="label")
     
     if len(label_files) == 0:
         return None

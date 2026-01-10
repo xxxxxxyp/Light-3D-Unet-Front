@@ -14,6 +14,8 @@ from pathlib import Path
 from scipy import ndimage
 from scipy.ndimage import rotate, zoom
 
+from .utils import find_case_files
+
 
 class PatchDataset(Dataset):
     """
@@ -46,23 +48,11 @@ class PatchDataset(Dataset):
         
         # Load case data
         self.cases = []
-        images_dir = self.data_dir / "images"
-        labels_dir = self.data_dir / "labels"
         
         for case_id in self.case_ids:
             # Find image and label files for this case
-            # Images have pattern: case_id_*.nii or case_id_*.nii.gz (e.g., 0001_0000.nii.gz)
-            # Labels have pattern: case_id.nii or case_id.nii.gz (e.g., 0001.nii.gz)
-            image_files = []
-            label_files = []
-            
-            if images_dir.exists():
-                for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
-                    image_files.extend(images_dir.glob(pattern))
-            
-            if labels_dir.exists():
-                for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
-                    label_files.extend(labels_dir.glob(pattern))
+            image_files = find_case_files(self.data_dir, case_id, file_type="image")
+            label_files = find_case_files(self.data_dir, case_id, file_type="label")
             
             if len(image_files) > 0 and len(label_files) > 0:
                 # Metadata is stored in metadata/{case_id}.json
