@@ -3,10 +3,10 @@ Utility functions for file operations
 """
 
 from pathlib import Path
-from typing import List
+from typing import List, Union
 
 
-def find_case_files(base_dir: Path, case_id: str, file_type: str = "image") -> List[Path]:
+def find_case_files(base_dir: Union[Path, str], case_id: str, file_type: str = "image") -> List[Path]:
     """
     Find image or label files for a specific case
     
@@ -16,7 +16,7 @@ def find_case_files(base_dir: Path, case_id: str, file_type: str = "image") -> L
         file_type: Type of file to find ("image" or "label")
     
     Returns:
-        List of matching file paths
+        List of matching file paths (sorted for consistent ordering)
     """
     base_dir = Path(base_dir)
     
@@ -36,4 +36,5 @@ def find_case_files(base_dir: Path, case_id: str, file_type: str = "image") -> L
         for pattern in patterns:
             files.extend(subdir.glob(pattern))
     
-    return files
+    # Sort for consistent ordering across systems
+    return sorted(files)
