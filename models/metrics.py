@@ -1,0 +1,310 @@
+"""
+Evaluation Metrics for Lesion Segmentation
+Includes lesion-wise recall, precision, voxel-wise DSC, and FP per case
+"""
+
+import numpy as np
+from scipy import ndimage
+from sklearn.metrics import precision_score, recall_score
+
+
+def calculate_dsc(pred, target, smooth=1e-6):
+    """
+    Calculate Dice Similarity Coefficient (DSC)
+    
+    Args:
+        pred: Predicted binary mask
+        target: Ground truth binary mask
+        smooth: Smoothing factor
+    
+    Returns:
+        dsc: Dice coefficient
+    """
+    pred = pred.flatten()
+    target = target.flatten()
+    
+    intersection = (pred * target).sum()
+    union = pred.sum() + target.sum()
+    
+    dsc = (2.0 * intersection + smooth) / (union + smooth)
+    
+    return dsc
+
+
+def get_connected_components(mask, min_size=0):
+    """
+    Get connected components from binary mask
+    
+    Args:
+        mask: Binary mask
+        min_size: Minimum component size (in voxels)
+    
+    Returns:
+        labeled: Labeled array where each component has unique integer
+        num_components: Number of components
+    """
+    labeled, num_components = ndimage.label(mask)
+    
+    if min_size > 0:
+        # Filter small components
+        component_sizes = np.bincount(labeled.ravel())
+        small_components = component_sizes < min_size
+        small_components[0] = False  # Keep background
+        
+        labeled[small_components[labeled]] = 0
+        
+        # Relabel
+        labeled, num_components = ndimage.label(labeled > 0)
+    
+    return labeled, num_components
+
+
+def calculate_iou(pred_component, target_component):
+    """Calculate IoU between two binary masks"""
+    intersection = np.logical_and(pred_component, target_component).sum()
+    union = np.logical_or(pred_component, target_component).sum()
+    
+    if union == 0:
+        return 0.0
+    
+    return intersection / union
+
+
+def calculate_center_distance(pred_component, target_component, spacing=(1.0, 1.0, 1.0)):
+    """
+    Calculate distance between centers of mass
+    
+    Args:
+        pred_component: Predicted component mask
+        target_component: Target component mask
+        spacing: Voxel spacing (z, y, x) in mm
+    
+    Returns:
+        distance: Distance in mm
+    """
+    pred_center = ndimage.center_of_mass(pred_component)
+    target_center = ndimage.center_of_mass(target_component)
+    
+    # Handle potential 4D output from center_of_mass (batch dimension)
+    if len(pred_center) > 3:
+        pred_center = pred_center[:3]
+    if len(target_center) > 3:
+        target_center = target_center[:3]
+    
+    # Convert to physical coordinates
+    pred_center_mm = np.array(pred_center) * np.array(spacing)
+    target_center_mm = np.array(target_center) * np.array(spacing)
+    
+    distance = np.linalg.norm(pred_center_mm - target_center_mm)
+    
+    return distance
+
+
+def match_components(pred_labeled, target_labeled, iou_threshold=0.1,
+                    distance_threshold_mm=10.0, spacing=(4.0, 4.0, 4.0)):
+    """
+    Match predicted components to target components
+    
+    Args:
+        pred_labeled: Labeled prediction array
+        target_labeled: Labeled target array
+        iou_threshold: IoU threshold for matching
+        distance_threshold_mm: Center distance threshold in mm
+        spacing: Voxel spacing (z, y, x) in mm
+    
+    Returns:
+        matches: List of (pred_id, target_id) tuples
+        unmatched_pred: List of unmatched prediction component IDs
+        unmatched_target: List of unmatched target component IDs
+    """
+    num_pred = pred_labeled.max()
+    num_target = target_labeled.max()
+    
+    if num_pred == 0 or num_target == 0:
+        return [], list(range(1, num_pred + 1)), list(range(1, num_target + 1))
+    
+    # Calculate IoU and distance for all pairs
+    matches = []
+    matched_pred = set()
+    matched_target = set()
+    
+    for pred_id in range(1, num_pred + 1):
+        pred_mask = pred_labeled == pred_id
+        
+        best_iou = 0.0
+        best_target_id = None
+        
+        for target_id in range(1, num_target + 1):
+            if target_id in matched_target:
+                continue
+            
+            target_mask = target_labeled == target_id
+            
+            # Check IoU
+            iou = calculate_iou(pred_mask, target_mask)
+            
+            # Check center distance
+            distance = calculate_center_distance(pred_mask, target_mask, spacing)
+            
+            # Match if either criterion is met
+            if iou >= iou_threshold or distance <= distance_threshold_mm:
+                if iou > best_iou:
+                    best_iou = iou
+                    best_target_id = target_id
+        
+        if best_target_id is not None:
+            matches.append((pred_id, best_target_id))
+            matched_pred.add(pred_id)
+            matched_target.add(best_target_id)
+    
+    unmatched_pred = [i for i in range(1, num_pred + 1) if i not in matched_pred]
+    unmatched_target = [i for i in range(1, num_target + 1) if i not in matched_target]
+    
+    return matches, unmatched_pred, unmatched_target
+
+
+def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
+                             iou_threshold=0.1, distance_threshold_mm=10.0,
+                             spacing=(4.0, 4.0, 4.0)):
+    """
+    Calculate lesion-wise metrics
+    
+    Args:
+        pred: Predicted probability map or binary mask [D, H, W] or [B, 1, D, H, W]
+        target: Ground truth binary mask [D, H, W] or [B, 1, D, H, W]
+        threshold: Probability threshold for binarization
+        min_size_voxels: Minimum lesion size in voxels
+        iou_threshold: IoU threshold for matching
+        distance_threshold_mm: Center distance threshold
+        spacing: Voxel spacing (z, y, x) in mm
+    
+    Returns:
+        metrics: Dictionary with recall, precision, f1, tp, fp, fn
+    """
+    # Handle batch dimension
+    if len(pred.shape) == 5:
+        pred = pred[:, 0, :, :, :]  # Remove channel dimension
+    if len(target.shape) == 5:
+        target = target[:, 0, :, :, :]
+    
+    # Binarize prediction
+    pred_binary = (pred >= threshold).astype(np.int32)
+    target_binary = (target >= 0.5).astype(np.int32)
+    
+    # Get connected components
+    pred_labeled, num_pred = get_connected_components(pred_binary, min_size=min_size_voxels)
+    target_labeled, num_target = get_connected_components(target_binary, min_size=min_size_voxels)
+    
+    if num_target == 0:
+        # No ground truth lesions
+        if num_pred == 0:
+            return {"recall": 1.0, "precision": 1.0, "f1": 1.0, "tp": 0, "fp": 0, "fn": 0}
+        else:
+            return {"recall": 0.0, "precision": 0.0, "f1": 0.0, "tp": 0, "fp": num_pred, "fn": 0}
+    
+    if num_pred == 0:
+        # No predictions
+        return {"recall": 0.0, "precision": 0.0, "f1": 0.0, "tp": 0, "fp": 0, "fn": num_target}
+    
+    # Match components
+    matches, unmatched_pred, unmatched_target = match_components(
+        pred_labeled, target_labeled,
+        iou_threshold=iou_threshold,
+        distance_threshold_mm=distance_threshold_mm,
+        spacing=spacing
+    )
+    
+    tp = len(matches)
+    fp = len(unmatched_pred)
+    fn = len(unmatched_target)
+    
+    # Calculate recall and precision
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
+    
+    return {
+        "recall": recall,
+        "precision": precision,
+        "f1": f1,
+        "tp": tp,
+        "fp": fp,
+        "fn": fn
+    }
+
+
+def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0)):
+    """
+    Calculate all metrics for a batch of predictions
+    
+    Args:
+        predictions: Predicted probability maps [B, 1, D, H, W]
+        labels: Ground truth binary masks [B, 1, D, H, W]
+        threshold: Probability threshold
+        spacing: Voxel spacing
+    
+    Returns:
+        metrics: Dictionary with all metrics
+    """
+    batch_size = predictions.shape[0]
+    
+    # Voxel-wise metrics
+    pred_binary = (predictions >= threshold).astype(np.float32)
+    label_binary = (labels >= 0.5).astype(np.float32)
+    
+    voxel_dsc = calculate_dsc(pred_binary, label_binary)
+    
+    # Lesion-wise metrics (aggregate over batch)
+    total_tp = 0
+    total_fp = 0
+    total_fn = 0
+    
+    for i in range(batch_size):
+        lesion_metrics = calculate_lesion_metrics(
+            predictions[i],
+            labels[i],
+            threshold=threshold,
+            min_size_voxels=0,  # No filtering during validation
+            iou_threshold=0.1,
+            distance_threshold_mm=10.0,
+            spacing=spacing
+        )
+        
+        total_tp += lesion_metrics["tp"]
+        total_fp += lesion_metrics["fp"]
+        total_fn += lesion_metrics["fn"]
+    
+    # Calculate aggregate lesion-wise metrics
+    lesion_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+    lesion_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    fp_per_case = total_fp / batch_size
+    
+    return {
+        "dsc": voxel_dsc,
+        "recall": lesion_recall,
+        "precision": lesion_precision,
+        "fp_per_case": fp_per_case,
+        "tp": total_tp,
+        "fp": total_fp,
+        "fn": total_fn
+    }
+
+
+def test_metrics():
+    """Test metrics calculation"""
+    # Create dummy data
+    pred = np.random.rand(2, 1, 48, 48, 48)
+    target = np.random.randint(0, 2, (2, 1, 48, 48, 48)).astype(np.float32)
+    
+    metrics = calculate_metrics(pred, target, threshold=0.5)
+    
+    print("Metrics:")
+    print(f"  DSC: {metrics['dsc']:.4f}")
+    print(f"  Recall: {metrics['recall']:.4f}")
+    print(f"  Precision: {metrics['precision']:.4f}")
+    print(f"  FP per case: {metrics['fp_per_case']:.4f}")
+    print(f"  TP: {metrics['tp']}, FP: {metrics['fp']}, FN: {metrics['fn']}")
+
+
+if __name__ == "__main__":
+    test_metrics()
