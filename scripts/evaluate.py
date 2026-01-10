@@ -17,6 +17,7 @@ from tqdm import tqdm
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.metrics import calculate_lesion_metrics, calculate_dsc
+from models.utils import find_case_files
 
 
 def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.0, 4.0)):
@@ -41,10 +42,11 @@ def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.
     prob_nii = nib.load(prob_path)
     prob_map = prob_nii.get_fdata()
     
-    # Load ground truth label
-    case_dir = Path(data_dir) / case_id
-    labels_dir = case_dir / "labels"
-    label_files = list(labels_dir.glob("*.nii*"))
+    # Load ground truth label from flat structure
+    data_dir = Path(data_dir)
+    
+    # Find label file for this case
+    label_files = find_case_files(data_dir, case_id, file_type="label")
     
     if len(label_files) == 0:
         return None

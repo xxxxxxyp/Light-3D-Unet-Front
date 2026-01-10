@@ -27,7 +27,12 @@ Light-3D-Unet-Front/
 │   └── unet_fl70.yaml          # Main configuration file
 ├── data/
 │   ├── raw/                    # Raw data (user-provided)
+│   │   ├── images/             # PET images
+│   │   └── labels/             # Lesion masks
 │   ├── processed/              # Preprocessed data with metadata
+│   │   ├── images/             # Preprocessed PET images
+│   │   ├── labels/             # Preprocessed lesion masks
+│   │   └── metadata/           # Per-case metadata JSON files
 │   └── splits/                 # Train/val/test split files
 ├── models/
 │   ├── checkpoints/            # Training checkpoints
@@ -138,7 +143,8 @@ This applies:
 - 0.5%-99.5% percentile intensity clipping
 - Linear normalization to [0, 1]
 - Preserves original 4×4×4mm spacing (no resampling)
-- Generates metadata.json for each case
+- Generates metadata JSON files in `data/processed/metadata/{case_id}.json`
+- Outputs files in flat structure matching raw data (images/ and labels/ subdirectories)
 
 ## Training
 

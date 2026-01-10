@@ -19,6 +19,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.unet3d import Lightweight3DUNet
 from models.metrics import get_connected_components, calculate_metrics
+from models.utils import find_case_files
 
 
 class Inferencer:
@@ -196,11 +197,11 @@ class Inferencer:
         Returns:
             success: Boolean indicating success
         """
-        case_dir = Path(data_dir) / case_id
+        # Load image from flat structure
+        data_dir = Path(data_dir)
         
-        # Load image
-        images_dir = case_dir / "images"
-        image_files = list(images_dir.glob("*.nii*"))
+        # Find image file for this case
+        image_files = find_case_files(data_dir, case_id, file_type="image")
         
         if len(image_files) == 0:
             print(f"Warning: No image files found for {case_id}")

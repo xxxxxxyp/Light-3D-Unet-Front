@@ -14,6 +14,8 @@ from pathlib import Path
 from scipy import ndimage
 from scipy.ndimage import rotate, zoom
 
+from .utils import find_case_files
+
 
 class PatchDataset(Dataset):
     """
@@ -46,26 +48,23 @@ class PatchDataset(Dataset):
         
         # Load case data
         self.cases = []
+        
         for case_id in self.case_ids:
-            case_dir = self.data_dir / case_id
-            if not case_dir.exists():
-                print(f"Warning: Case {case_id} not found in {self.data_dir}, skipping...")
-                continue
-            
-            # Find image and label files
-            images_dir = case_dir / "images"
-            labels_dir = case_dir / "labels"
-            
-            image_files = list(images_dir.glob("*.nii*")) if images_dir.exists() else []
-            label_files = list(labels_dir.glob("*.nii*")) if labels_dir.exists() else []
+            # Find image and label files for this case
+            image_files = find_case_files(self.data_dir, case_id, file_type="image")
+            label_files = find_case_files(self.data_dir, case_id, file_type="label")
             
             if len(image_files) > 0 and len(label_files) > 0:
+                # Metadata is stored in metadata/{case_id}.json
+                metadata_path = self.data_dir / "metadata" / f"{case_id}.json"
                 self.cases.append({
                     "case_id": case_id,
                     "image_path": str(image_files[0]),
                     "label_path": str(label_files[0]),
-                    "metadata_path": str(case_dir / "metadata.json")
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None
                 })
+            else:
+                print(f"Warning: Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
         
         print(f"Loaded {len(self.cases)} cases from {split_file}")
         
