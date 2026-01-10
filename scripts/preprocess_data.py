@@ -120,12 +120,14 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
         print(f"Warning: Case {case_id} missing files (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
         return False, None
     
-    # Create output directories
-    processed_case_dir = Path(processed_dir) / case_id
-    processed_images_dir = processed_case_dir / "images"
-    processed_labels_dir = processed_case_dir / "labels"
+    # Create output directories (flat structure matching raw)
+    processed_dir = Path(processed_dir)
+    processed_images_dir = processed_dir / "images"
+    processed_labels_dir = processed_dir / "labels"
+    processed_metadata_dir = processed_dir / "metadata"
     processed_images_dir.mkdir(parents=True, exist_ok=True)
     processed_labels_dir.mkdir(parents=True, exist_ok=True)
+    processed_metadata_dir.mkdir(parents=True, exist_ok=True)
     
     # Process each image file (typically one PET scan per case)
     metadata_list = []
@@ -191,7 +193,7 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
     
     # Save metadata JSON
     if metadata_list:
-        metadata_path = processed_case_dir / "metadata.json"
+        metadata_path = processed_metadata_dir / f"{case_id}.json"
         with open(metadata_path, "w") as f:
             json.dump(metadata_list[0] if len(metadata_list) == 1 else metadata_list, f, indent=2)
         

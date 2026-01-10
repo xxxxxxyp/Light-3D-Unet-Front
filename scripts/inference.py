@@ -196,11 +196,14 @@ class Inferencer:
         Returns:
             success: Boolean indicating success
         """
-        case_dir = Path(data_dir) / case_id
+        # Load image from flat structure
+        data_dir = Path(data_dir)
+        images_dir = data_dir / "images"
         
-        # Load image
-        images_dir = case_dir / "images"
-        image_files = list(images_dir.glob("*.nii*"))
+        # Find image file for this case
+        image_files = []
+        for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+            image_files.extend(images_dir.glob(pattern))
         
         if len(image_files) == 0:
             print(f"Warning: No image files found for {case_id}")

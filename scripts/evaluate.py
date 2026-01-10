@@ -41,10 +41,14 @@ def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.
     prob_nii = nib.load(prob_path)
     prob_map = prob_nii.get_fdata()
     
-    # Load ground truth label
-    case_dir = Path(data_dir) / case_id
-    labels_dir = case_dir / "labels"
-    label_files = list(labels_dir.glob("*.nii*"))
+    # Load ground truth label from flat structure
+    data_dir = Path(data_dir)
+    labels_dir = data_dir / "labels"
+    
+    # Find label file for this case
+    label_files = []
+    for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
+        label_files.extend(labels_dir.glob(pattern))
     
     if len(label_files) == 0:
         return None

@@ -46,26 +46,35 @@ class PatchDataset(Dataset):
         
         # Load case data
         self.cases = []
+        images_dir = self.data_dir / "images"
+        labels_dir = self.data_dir / "labels"
+        
         for case_id in self.case_ids:
-            case_dir = self.data_dir / case_id
-            if not case_dir.exists():
-                print(f"Warning: Case {case_id} not found in {self.data_dir}, skipping...")
-                continue
+            # Find image and label files for this case
+            # Images have pattern: case_id_*.nii or case_id_*.nii.gz (e.g., 0001_0000.nii.gz)
+            # Labels have pattern: case_id.nii or case_id.nii.gz (e.g., 0001.nii.gz)
+            image_files = []
+            label_files = []
             
-            # Find image and label files
-            images_dir = case_dir / "images"
-            labels_dir = case_dir / "labels"
+            if images_dir.exists():
+                for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+                    image_files.extend(images_dir.glob(pattern))
             
-            image_files = list(images_dir.glob("*.nii*")) if images_dir.exists() else []
-            label_files = list(labels_dir.glob("*.nii*")) if labels_dir.exists() else []
+            if labels_dir.exists():
+                for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
+                    label_files.extend(labels_dir.glob(pattern))
             
             if len(image_files) > 0 and len(label_files) > 0:
+                # Metadata is stored in metadata/{case_id}.json
+                metadata_path = self.data_dir / "metadata" / f"{case_id}.json"
                 self.cases.append({
                     "case_id": case_id,
                     "image_path": str(image_files[0]),
                     "label_path": str(label_files[0]),
-                    "metadata_path": str(case_dir / "metadata.json")
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None
                 })
+            else:
+                print(f"Warning: Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
         
         print(f"Loaded {len(self.cases)} cases from {split_file}")
         
