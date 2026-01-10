@@ -52,17 +52,14 @@ pip install -r requirements.txt
 
    ```
    data/raw/
-   ├── FL_001/
-   │   ├── images/
-   │   │   └── FL_001_pet.nii.gz  # PET 图像
-   │   └── labels/
-   │       └── FL_001_label.nii.gz  # 病灶标注
-   ├── FL_002/
-   │   ├── images/
-   │   │   └── FL_002_pet.nii.gz
-   │   └── labels/
-   │       └── FL_002_label.nii.gz
-   ...
+   ├── images/
+   │   ├── 0001_0000.nii.gz  # PET 图像
+   │   ├── 0002_0000.nii.gz
+   │   └── ...
+   └── labels/
+       ├── 0001.nii.gz  # 病灶标注
+       ├── 0002.nii.gz
+       └── ...
    ```
 
    **数据要求**：
@@ -70,6 +67,7 @@ pip install -r requirements.txt
    - 空间分辨率: 4×4×4mm
    - SUV 值已预计算
    - 标签: 二值 (0=背景, 1=病灶)
+   - 文件命名: 图像文件为 `{case_id}_*.nii.gz`，标签文件为 `{case_id}.nii.gz`
 
 2. **数据划分**
 

@@ -17,7 +17,7 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
     Split dataset into train/val/test sets
     
     Args:
-        data_root: Path to raw data directory containing case folders
+        data_root: Path to raw data directory (expects flat structure with images/ and labels/ subdirs)
         output_dir: Path to output directory for splits
         train_ratio: Training set ratio
         val_ratio: Validation set ratio
@@ -31,26 +31,49 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
     assert abs(train_ratio + val_ratio + test_ratio - 1.0) < 1e-6, \
         f"Split ratios must sum to 1.0, got {train_ratio + val_ratio + test_ratio}"
     
-    # Get all case folders from raw data
+    # Get all case IDs from raw data
+    # Data structure: data/raw/images/*.nii.gz and data/raw/labels/*.nii.gz
     data_root = Path(data_root)
     
-    # Look for case directories (assuming they contain 'images' and 'labels' subdirectories)
-    case_dirs = []
-    if data_root.exists():
-        for item in sorted(data_root.iterdir()):
-            if item.is_dir():
-                # Check if it has images and labels subdirectories
-                images_dir = item / "images"
-                labels_dir = item / "labels"
-                if images_dir.exists() and labels_dir.exists():
-                    case_dirs.append(item.name)
+    case_ids = set()
+    
+    # Extract case IDs from label files (labels have format: XXXX.nii.gz or XXXX.nii)
+    labels_dir = data_root / "labels"
+    if labels_dir.exists():
+        # Use specific patterns for .nii and .nii.gz files
+        for pattern in ["*.nii.gz", "*.nii"]:
+            for label_file in labels_dir.glob(pattern):
+                # Extract case ID by removing all NIfTI extensions
+                # For .nii.gz: use with_suffix('') twice to remove .gz then .nii
+                # For .nii: use with_suffix('') once
+                case_id = label_file.name
+                if case_id.endswith('.nii.gz'):
+                    case_id = case_id[:-7]  # Remove '.nii.gz'
+                elif case_id.endswith('.nii'):
+                    case_id = case_id[:-4]  # Remove '.nii'
+                case_ids.add(case_id)
+    
+    # Verify that corresponding image files exist (images have format: XXXX_*.nii.gz or XXXX_*.nii)
+    images_dir = data_root / "images"
+    valid_cases = []
+    if images_dir.exists() and len(case_ids) > 0:
+        for case_id in sorted(case_ids):
+            # Look for image file with specific patterns
+            image_files = []
+            for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+                image_files.extend(images_dir.glob(pattern))
+            if len(image_files) > 0:
+                valid_cases.append(case_id)
+    
+    case_dirs = valid_cases
     
     # If no cases found, create placeholder structure for demonstration
     if len(case_dirs) == 0:
-        print(f"Warning: No case directories found in {data_root}")
+        print(f"Warning: No valid cases found in {data_root}")
+        print("Expected structure: data/raw/images/XXXX_*.nii.gz and data/raw/labels/XXXX.nii.gz")
         print("Creating placeholder case list for 123 FL cases...")
         # Generate placeholder case IDs
-        case_dirs = [f"FL_{i:03d}" for i in range(1, 124)]
+        case_dirs = [f"{i:04d}" for i in range(1, 124)]
     
     total_cases = len(case_dirs)
     print(f"Total cases found: {total_cases}")

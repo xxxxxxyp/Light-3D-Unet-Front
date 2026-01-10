@@ -87,17 +87,14 @@ Place your FL data in the `data/raw/` directory with the following structure:
 
 ```
 data/raw/
-├── FL_001/
-│   ├── images/
-│   │   └── FL_001_pet.nii.gz
-│   └── labels/
-│       └── FL_001_label.nii.gz
-├── FL_002/
-│   ├── images/
-│   │   └── FL_002_pet.nii.gz
-│   └── labels/
-│       └── FL_002_label.nii.gz
-...
+├── images/
+│   ├── 0001_0000.nii.gz
+│   ├── 0002_0000.nii.gz
+│   └── ...
+└── labels/
+    ├── 0001.nii.gz
+    ├── 0002.nii.gz
+    └── ...
 ```
 
 **Requirements**:
@@ -105,6 +102,7 @@ data/raw/
 - Spacing: 4×4×4mm (will be verified)
 - SUV values must be pre-calculated
 - Labels must be binary (0=background, 1=lesion)
+- File naming: Image files should be `{case_id}_*.nii.gz`, label files should be `{case_id}.nii.gz`
 
 ### Step 2: Split Dataset
 

@@ -88,8 +88,8 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
     Preprocess a single case
     
     Args:
-        case_id: Case identifier
-        raw_dir: Path to raw data directory
+        case_id: Case identifier (e.g., "0001")
+        raw_dir: Path to raw data directory (contains images/ and labels/ subdirs)
         processed_dir: Path to processed output directory
         config: Preprocessing configuration
     
@@ -97,13 +97,27 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
         success: Boolean indicating success
         metadata: Case metadata dictionary
     """
-    raw_case_dir = Path(raw_dir) / case_id
-    images_dir = raw_case_dir / "images"
-    labels_dir = raw_case_dir / "labels"
+    raw_dir = Path(raw_dir)
+    images_dir = raw_dir / "images"
+    labels_dir = raw_dir / "labels"
     
-    # Check if case exists
-    if not raw_case_dir.exists():
-        print(f"Warning: Case {case_id} not found in {raw_dir}, skipping...")
+    # Find image and label files for this case
+    # Images have pattern: case_id_*.nii or case_id_*.nii.gz (e.g., 0001_0000.nii.gz)
+    # Labels have pattern: case_id.nii or case_id.nii.gz (e.g., 0001.nii.gz)
+    image_files = []
+    label_files = []
+    
+    if images_dir.exists():
+        for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+            image_files.extend(images_dir.glob(pattern))
+    
+    if labels_dir.exists():
+        for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
+            label_files.extend(labels_dir.glob(pattern))
+    
+    # Check if files exist
+    if len(image_files) == 0 or len(label_files) == 0:
+        print(f"Warning: Case {case_id} missing files (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
         return False, None
     
     # Create output directories
@@ -112,30 +126,6 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
     processed_labels_dir = processed_case_dir / "labels"
     processed_images_dir.mkdir(parents=True, exist_ok=True)
     processed_labels_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Find image and label files
-    image_files = list(images_dir.glob("*.nii*")) if images_dir.exists() else []
-    label_files = list(labels_dir.glob("*.nii*")) if labels_dir.exists() else []
-    
-    if len(image_files) == 0:
-        print(f"Warning: No image files found for {case_id}, creating dummy data for demonstration")
-        # Create dummy data for demonstration
-        dummy_image = np.random.rand(144, 144, 100) * 10  # Simulating SUV values
-        dummy_label = np.random.randint(0, 2, (144, 144, 100))
-        
-        # Create NIfTI with 4×4×4mm spacing
-        affine = np.diag([4.0, 4.0, 4.0, 1.0])
-        image_nii = nib.Nifti1Image(dummy_image, affine)
-        label_nii = nib.Nifti1Image(dummy_label, affine)
-        
-        image_path = images_dir / f"{case_id}_pet.nii.gz"
-        label_path = labels_dir / f"{case_id}_label.nii.gz"
-        images_dir.mkdir(parents=True, exist_ok=True)
-        labels_dir.mkdir(parents=True, exist_ok=True)
-        nib.save(image_nii, image_path)
-        nib.save(label_nii, label_path)
-        image_files = [image_path]
-        label_files = [label_path]
     
     # Process each image file (typically one PET scan per case)
     metadata_list = []
