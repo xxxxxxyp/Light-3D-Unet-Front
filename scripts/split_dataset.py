@@ -17,7 +17,7 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
     Split dataset into train/val/test sets
     
     Args:
-        data_root: Path to raw data directory containing case folders
+        data_root: Path to raw data directory (expects flat structure with images/ and labels/ subdirs)
         output_dir: Path to output directory for splits
         train_ratio: Training set ratio
         val_ratio: Validation set ratio
@@ -37,12 +37,18 @@ def split_dataset(data_root, output_dir, train_ratio=0.70, val_ratio=0.15, test_
     
     case_ids = set()
     
-    # Extract case IDs from label files (labels have format: XXXX.nii.gz)
+    # Extract case IDs from label files (labels have format: XXXX.nii.gz or XXXX.nii)
     labels_dir = data_root / "labels"
     if labels_dir.exists():
         for label_file in labels_dir.glob("*.nii*"):
-            # Extract case ID from filename (remove extension)
-            case_id = label_file.name.replace('.nii.gz', '').replace('.nii', '')
+            # Only process .nii and .nii.gz files
+            if label_file.suffix not in ['.nii', '.gz'] or (label_file.suffix == '.gz' and not label_file.stem.endswith('.nii')):
+                continue
+            # Extract case ID from filename using Path.stem
+            # For .nii.gz files, stem gives us "case_id.nii", so we need to remove .nii
+            case_id = label_file.stem
+            if case_id.endswith('.nii'):
+                case_id = case_id[:-4]
             case_ids.add(case_id)
     
     # Verify that corresponding image files exist (images have format: XXXX_0000.nii.gz)

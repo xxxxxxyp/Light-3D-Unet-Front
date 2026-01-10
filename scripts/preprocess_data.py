@@ -102,10 +102,18 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
     labels_dir = raw_dir / "labels"
     
     # Find image and label files for this case
-    # Images have pattern: case_id_*.nii* (e.g., 0001_0000.nii.gz)
-    # Labels have pattern: case_id.nii* (e.g., 0001.nii.gz)
-    image_files = list(images_dir.glob(f"{case_id}_*.nii*")) if images_dir.exists() else []
-    label_files = list(labels_dir.glob(f"{case_id}.nii*")) if labels_dir.exists() else []
+    # Images have pattern: case_id_*.nii or case_id_*.nii.gz (e.g., 0001_0000.nii.gz)
+    # Labels have pattern: case_id.nii or case_id.nii.gz (e.g., 0001.nii.gz)
+    image_files = []
+    label_files = []
+    
+    if images_dir.exists():
+        for pattern in [f"{case_id}_*.nii.gz", f"{case_id}_*.nii"]:
+            image_files.extend(images_dir.glob(pattern))
+    
+    if labels_dir.exists():
+        for pattern in [f"{case_id}.nii.gz", f"{case_id}.nii"]:
+            label_files.extend(labels_dir.glob(pattern))
     
     # Check if files exist
     if len(image_files) == 0 or len(label_files) == 0:
