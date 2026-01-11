@@ -30,7 +30,6 @@ from models.metrics import calculate_metrics, DEFAULT_SPACING
 class Trainer:
     """Trainer class for 3D U-Net"""
     EPS = 1e-8
-    VAL_BATCH_WITH_META = 4
     
     def __init__(self, config_path):
         """Initialize trainer with configuration"""
@@ -163,7 +162,10 @@ class Trainer:
         if spacings is None:
             spacing_value = target_spacing
         elif isinstance(spacings, (torch.Tensor, list, tuple)):
-            spacing_value = spacings[index]
+            if len(spacings) <= index:
+                spacing_value = target_spacing
+            else:
+                spacing_value = spacings[index]
         else:
             spacing_value = spacings
         if isinstance(spacing_value, torch.Tensor):
@@ -222,9 +224,9 @@ class Trainer:
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             for batch in pbar:
-                if isinstance(batch, (list, tuple)) and len(batch) == self.VAL_BATCH_WITH_META:
+                try:
                     images, labels, _, spacings = batch
-                else:
+                except (ValueError, TypeError):
                     images, labels = batch
                     spacings = None
 
@@ -424,7 +426,7 @@ class Trainer:
 
                 if better_metric:
                     improvement = (current_metric - self.best_recall) if recall_improved else (current_dsc - self.best_dsc)
-                    self.best_recall = max(self.best_recall, current_metric)
+                    self.best_recall = current_metric
                     self.best_dsc = current_dsc
                     self.best_metric = self.best_recall
                     self.best_epoch = epoch

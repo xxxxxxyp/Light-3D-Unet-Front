@@ -315,6 +315,11 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     Returns:
         metrics: Dictionary with all metrics
     """
+    if not isinstance(predictions, (list, tuple)) and not hasattr(predictions, "shape"):
+        raise TypeError("predictions must be a list/tuple or array-like with a shape attribute")
+    if not isinstance(labels, (list, tuple)) and not hasattr(labels, "shape"):
+        raise TypeError("labels must be a list/tuple or array-like with a shape attribute")
+
     if isinstance(predictions, (list, tuple)):
         pred_list = list(predictions)
     else:
