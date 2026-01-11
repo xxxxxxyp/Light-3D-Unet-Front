@@ -283,6 +283,18 @@ def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
     }
 
 
+def _normalize_spacing_per_case(spacing, num_cases):
+    """Return a spacing list for each case."""
+    if isinstance(spacing, np.ndarray):
+        spacing = spacing.tolist()
+    if isinstance(spacing, (list, tuple)):
+        if len(spacing) == num_cases and spacing and isinstance(spacing[0], (list, tuple, np.ndarray)):
+            return [tuple(map(float, s)) for s in spacing]
+        if len(spacing) == 3 and all(isinstance(s, (int, float, np.floating)) for s in spacing):
+            return [tuple(map(float, spacing)) for _ in range(num_cases)]
+    return [tuple(map(float, (4.0, 4.0, 4.0))) for _ in range(num_cases)]
+
+
 def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0)):
     """
     Calculate all metrics for a batch of predictions
@@ -296,36 +308,54 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0
     Returns:
         metrics: Dictionary with all metrics
     """
-    batch_size = predictions.shape[0]
-    
-    # Voxel-wise metrics
-    voxel_dsc = calculate_dsc(predictions >= threshold, labels >= 0.5)
-    
-    # Lesion-wise metrics (aggregate over batch)
+    if isinstance(predictions, (list, tuple)):
+        pred_list = list(predictions)
+    else:
+        pred_list = [predictions[i] for i in range(predictions.shape[0])]
+
+    if isinstance(labels, (list, tuple)):
+        label_list = list(labels)
+    else:
+        label_list = [labels[i] for i in range(labels.shape[0])]
+
+    num_cases = len(pred_list)
+    spacing_list = _normalize_spacing_per_case(spacing, num_cases)
+
     total_tp = 0
     total_fp = 0
     total_fn = 0
-    
-    for i in range(batch_size):
+    intersection_sum = 0.0
+    union_sum = 0.0
+
+    for pred, target, spacing_item in zip(pred_list, label_list, spacing_list):
+        pred_array = np.asarray(pred)
+        target_array = np.asarray(target)
+
+        pred_binary = (pred_array >= threshold).astype(np.int32)
+        target_binary = (target_array >= 0.5).astype(np.int32)
+
+        intersection_sum += (pred_binary * target_binary).sum()
+        union_sum += pred_binary.sum() + target_binary.sum()
+
         lesion_metrics = calculate_lesion_metrics(
-            predictions[i],
-            labels[i],
+            pred_array,
+            target_array,
             threshold=threshold,
-            min_size_voxels=0,  # No filtering during validation
+            min_size_voxels=0,
             iou_threshold=0.1,
             distance_threshold_mm=10.0,
-            spacing=spacing
+            spacing=spacing_item
         )
-        
+
         total_tp += lesion_metrics["tp"]
         total_fp += lesion_metrics["fp"]
         total_fn += lesion_metrics["fn"]
-    
-    # Calculate aggregate lesion-wise metrics
+
+    voxel_dsc = (2.0 * intersection_sum + 1e-6) / (union_sum + 1e-6)
     lesion_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
     lesion_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
-    fp_per_case = total_fp / batch_size
-    
+    fp_per_case = total_fp / num_cases if num_cases > 0 else 0.0
+
     return {
         "dsc": voxel_dsc,
         "recall": lesion_recall,

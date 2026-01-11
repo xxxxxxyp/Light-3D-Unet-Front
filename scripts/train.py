@@ -128,6 +128,8 @@ class Trainer:
         # Training state
         self.start_epoch = 0
         self.best_metric = 0.0
+        self.best_recall = 0.0
+        self.best_dsc = 0.0
         self.best_epoch = 0
         self.epochs_without_improvement = 0
         
@@ -139,6 +141,7 @@ class Trainer:
             "val_precision": [],
             "val_dsc": [],
             "val_fp_per_case": [],
+            "val_best_threshold": [],
             "learning_rate": []
         }
     
@@ -187,10 +190,18 @@ class Trainer:
         
         all_predictions = []
         all_labels = []
+        all_spacings = []
+        target_spacing = tuple(self.config.get("data", {}).get("spacing", {}).get("target", (4.0, 4.0, 4.0)))
         
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
-            for images, labels in pbar:
+            for batch in pbar:
+                if len(batch) == 4:
+                    images, labels, _, spacings = batch
+                else:
+                    images, labels = batch
+                    spacings = None
+
                 images = images.to(self.device)
                 labels = labels.to(self.device)
                 
@@ -202,27 +213,74 @@ class Trainer:
                 total_loss += loss.item()
                 num_batches += 1
                 
-                # Collect predictions for metrics
-                all_predictions.append(outputs.cpu().numpy())
-                all_labels.append(labels.cpu().numpy())
-                
+                outputs_np = outputs.cpu().numpy()
+                labels_np = labels.cpu().numpy()
+                batch_size = outputs_np.shape[0]
+
+                for b in range(batch_size):
+                    all_predictions.append(outputs_np[b])
+                    all_labels.append(labels_np[b])
+                    if spacings is not None:
+                        if isinstance(spacings, torch.Tensor):
+                            spacing_value = spacings[b]
+                        elif isinstance(spacings, (list, tuple)):
+                            spacing_value = spacings[b]
+                        else:
+                            spacing_value = spacings
+                    else:
+                        spacing_value = target_spacing
+                    if isinstance(spacing_value, torch.Tensor):
+                        spacing_value = spacing_value.tolist()
+                    all_spacings.append(tuple(float(s) for s in spacing_value))
+                 
                 # Update progress bar
                 pbar.set_postfix({"loss": f"{loss.item():.4f}"})
         
-        avg_loss = total_loss / num_batches
+        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+
+        default_threshold = self.config["validation"]["default_threshold"]
+        thresholds = self.config["validation"].get("threshold_sensitivity_range", [default_threshold])
+        if not thresholds:
+            thresholds = [default_threshold]
+        tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
+
+        best_metrics = None
+        best_threshold = thresholds[0] if len(thresholds) > 0 else default_threshold
+        best_recall = -1.0
+        best_dsc = -1.0
+
+        for threshold in thresholds:
+            metrics = calculate_metrics(
+                all_predictions,
+                all_labels,
+                threshold=threshold,
+                spacing=all_spacings if all_spacings else target_spacing
+            )
+            recall = metrics["recall"]
+            dsc = metrics["dsc"]
+            if recall > best_recall + 1e-8 or (abs(recall - best_recall) <= tie_threshold and dsc > best_dsc + 1e-8):
+                best_recall = recall
+                best_dsc = dsc
+                best_threshold = threshold
+                best_metrics = metrics
+
+        if best_metrics is None:
+            best_metrics = calculate_metrics(
+                all_predictions,
+                all_labels,
+                threshold=default_threshold,
+                spacing=all_spacings if all_spacings else target_spacing
+            )
+            best_recall = best_metrics["recall"]
+            best_dsc = best_metrics["dsc"]
+
+        best_metrics["best_threshold"] = best_threshold
+        best_metrics["best_recall"] = best_recall
+        best_metrics["best_dsc"] = best_dsc
+
+        print(f"Validation sweep - best recall: {best_recall:.4f} at threshold {best_threshold:.2f}")
         
-        # Concatenate all predictions and labels
-        all_predictions = np.concatenate(all_predictions, axis=0)
-        all_labels = np.concatenate(all_labels, axis=0)
-        
-        # Calculate metrics
-        metrics = calculate_metrics(
-            all_predictions,
-            all_labels,
-            threshold=self.config["validation"]["default_threshold"]
-        )
-        
-        return avg_loss, metrics
+        return avg_loss, best_metrics
     
     def save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint"""
@@ -232,6 +290,8 @@ class Trainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_metric": self.best_metric,
+            "best_recall": self.best_recall,
+            "best_dsc": self.best_dsc,
             "best_epoch": self.best_epoch,
             "config": self.config,
             "history": self.history
@@ -285,47 +345,65 @@ class Trainer:
                 
                 # Get current learning rate
                 current_lr = self.optimizer.param_groups[0]["lr"]
+
+                current_recall = val_metrics.get("best_recall", val_metrics["recall"])
+                current_dsc = val_metrics.get("best_dsc", val_metrics["dsc"])
+                current_threshold = val_metrics.get("best_threshold", self.config["validation"]["default_threshold"])
                 
                 # Update history
                 self.history["train_loss"].append(train_loss)
                 self.history["val_loss"].append(val_loss)
-                self.history["val_recall"].append(val_metrics["recall"])
+                self.history["val_recall"].append(current_recall)
                 self.history["val_precision"].append(val_metrics["precision"])
-                self.history["val_dsc"].append(val_metrics["dsc"])
+                self.history["val_dsc"].append(current_dsc)
                 self.history["val_fp_per_case"].append(val_metrics.get("fp_per_case", 0.0))
+                self.history["val_best_threshold"].append(current_threshold)
                 self.history["learning_rate"].append(current_lr)
                 
                 # Log to tensorboard
                 self.writer.add_scalar("Loss/train", train_loss, epoch)
                 self.writer.add_scalar("Loss/val", val_loss, epoch)
-                self.writer.add_scalar("Metrics/recall", val_metrics["recall"], epoch)
+                self.writer.add_scalar("Metrics/recall", current_recall, epoch)
                 self.writer.add_scalar("Metrics/precision", val_metrics["precision"], epoch)
-                self.writer.add_scalar("Metrics/dsc", val_metrics["dsc"], epoch)
+                self.writer.add_scalar("Metrics/dsc", current_dsc, epoch)
+                self.writer.add_scalar("Metrics/best_threshold", current_threshold, epoch)
                 self.writer.add_scalar("Learning_Rate", current_lr, epoch)
                 
                 # Print metrics
                 print(f"\nEpoch {epoch+1}/{epochs}")
                 print(f"  Train Loss: {train_loss:.4f}")
                 print(f"  Val Loss: {val_loss:.4f}")
-                print(f"  Val Recall: {val_metrics['recall']:.4f}")
+                print(f"  Val Recall: {current_recall:.4f} (best threshold: {current_threshold:.2f})")
                 print(f"  Val Precision: {val_metrics['precision']:.4f}")
-                print(f"  Val DSC: {val_metrics['dsc']:.4f}")
+                print(f"  Val DSC: {current_dsc:.4f}")
                 print(f"  Learning Rate: {current_lr:.6f}")
                 
                 # Check for improvement
-                current_metric = val_metrics["recall"]  # Primary metric
+                current_metric = current_recall  # Primary metric
                 is_best = False
+                tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
                 
-                if current_metric > self.best_metric:
-                    improvement = current_metric - self.best_metric
-                    self.best_metric = current_metric
+                if current_metric > self.best_recall + 1e-8:
+                    improvement = current_metric - self.best_recall
+                    self.best_recall = current_metric
+                    self.best_dsc = current_dsc
+                    self.best_metric = self.best_recall
                     self.best_epoch = epoch
                     self.epochs_without_improvement = 0
                     is_best = True
-                    print(f"  *** New best {self.config['metrics']['primary']}: {self.best_metric:.4f} (↑{improvement:.4f}) ***")
+                    print(f"  *** New best {self.config['metrics']['primary']}: {self.best_recall:.4f} (↑{improvement:.4f}) ***")
+                elif abs(current_metric - self.best_recall) <= tie_threshold and current_dsc > self.best_dsc + 1e-8:
+                    improvement = current_dsc - self.best_dsc
+                    self.best_recall = current_metric
+                    self.best_dsc = current_dsc
+                    self.best_metric = self.best_recall
+                    self.best_epoch = epoch
+                    self.epochs_without_improvement = 0
+                    is_best = True
+                    print(f"  *** Tie-broken improvement with DSC {self.best_dsc:.4f} (↑{improvement:.4f}) ***")
                 else:
                     self.epochs_without_improvement += 1
-                    print(f"  No improvement for {self.epochs_without_improvement} epochs (best: {self.best_metric:.4f} at epoch {self.best_epoch+1})")
+                    print(f"  No improvement for {self.epochs_without_improvement} epochs (best recall: {self.best_recall:.4f} at epoch {self.best_epoch+1})")
                 
                 # Save checkpoint
                 self.save_checkpoint(epoch, is_best=is_best)

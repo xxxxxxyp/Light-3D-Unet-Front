@@ -17,6 +17,54 @@ from scipy.ndimage import rotate, zoom
 from .utils import find_case_files
 
 
+class CaseDataset(Dataset):
+    """
+    Dataset for full-case validation/inference
+    Returns full volume (or ROI), label, case_id, and spacing
+    """
+    def __init__(self, data_dir, split_file):
+        self.data_dir = Path(data_dir)
+
+        with open(split_file, "r") as f:
+            self.case_ids = [line.strip() for line in f if line.strip()]
+
+        self.cases = []
+        for case_id in self.case_ids:
+            image_files = find_case_files(self.data_dir, case_id, file_type="image")
+            label_files = find_case_files(self.data_dir, case_id, file_type="label")
+
+            if len(image_files) > 0 and len(label_files) > 0:
+                metadata_path = self.data_dir / "metadata" / f"{case_id}.json"
+                self.cases.append({
+                    "case_id": case_id,
+                    "image_path": str(image_files[0]),
+                    "label_path": str(label_files[0]),
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None
+                })
+            else:
+                print(f"Warning: Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
+
+        print(f"Loaded {len(self.cases)} cases from {split_file}")
+
+    def __len__(self):
+        return len(self.cases)
+
+    def __getitem__(self, idx):
+        case = self.cases[idx]
+        image_nii = nib.load(case["image_path"])
+        label_nii = nib.load(case["label_path"])
+
+        image = image_nii.get_fdata().astype(np.float32)
+        label = label_nii.get_fdata().astype(np.float32)
+
+        spacing = tuple(float(s) for s in image_nii.header.get_zooms()[:3])
+
+        image = torch.from_numpy(image).unsqueeze(0)
+        label = torch.from_numpy(label).unsqueeze(0)
+
+        return image, label, case["case_id"], spacing
+
+
 class PatchDataset(Dataset):
     """
     Dataset for 3D patch extraction with class-balanced sampling
@@ -267,19 +315,29 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
     """
     augmentation = config["augmentation"] if is_train else None
     
-    dataset = PatchDataset(
-        data_dir=data_dir,
-        split_file=split_file,
-        patch_size=config["data"]["patch_size"],
-        lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
-        augmentation=augmentation,
-        seed=config["experiment"]["seed"]
-    )
+    if is_train:
+        dataset = PatchDataset(
+            data_dir=data_dir,
+            split_file=split_file,
+            patch_size=config["data"]["patch_size"],
+            lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
+            augmentation=augmentation,
+            seed=config["experiment"]["seed"]
+        )
+        batch_size = config["training"]["batch_size"]
+        shuffle = True
+    else:
+        dataset = CaseDataset(
+            data_dir=data_dir,
+            split_file=split_file
+        )
+        batch_size = 1
+        shuffle = False
     
     data_loader = DataLoader(
         dataset,
-        batch_size=config["training"]["batch_size"],
-        shuffle=is_train,
+        batch_size=batch_size,
+        shuffle=shuffle,
         num_workers=16,
         pin_memory=True
     )
