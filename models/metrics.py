@@ -7,8 +7,11 @@ import numpy as np
 from scipy import ndimage
 from sklearn.metrics import precision_score, recall_score
 
+DEFAULT_SPACING = (4.0, 4.0, 4.0)
+SMOOTH = 1e-6
 
-def calculate_dsc(pred, target, smooth=1e-6):
+
+def calculate_dsc(pred, target, smooth=SMOOTH):
     """
     Calculate Dice Similarity Coefficient (DSC)
     
@@ -292,10 +295,10 @@ def _normalize_spacing_per_case(spacing, num_cases):
             return [tuple(map(float, s)) for s in spacing]
         if len(spacing) == 3 and all(isinstance(s, (int, float, np.floating)) for s in spacing):
             return [tuple(map(float, spacing)) for _ in range(num_cases)]
-    return [tuple(map(float, (4.0, 4.0, 4.0))) for _ in range(num_cases)]
+    return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
 
 
-def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0)):
+def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACING):
     """
     Calculate all metrics for a batch of predictions
     
@@ -351,7 +354,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0
         total_fp += lesion_metrics["fp"]
         total_fn += lesion_metrics["fn"]
 
-    voxel_dsc = (2.0 * intersection_sum + 1e-6) / (union_sum + 1e-6)
+    voxel_dsc = (2.0 * intersection_sum + SMOOTH) / (union_sum + SMOOTH)
     lesion_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
     lesion_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
     fp_per_case = total_fp / num_cases if num_cases > 0 else 0.0

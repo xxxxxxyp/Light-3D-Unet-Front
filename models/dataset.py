@@ -6,6 +6,7 @@ Implements patch extraction with class-balanced sampling and augmentation
 import os
 import json
 import random
+import warnings
 import numpy as np
 import nibabel as nib
 import torch
@@ -42,7 +43,9 @@ class CaseDataset(Dataset):
                     "metadata_path": str(metadata_path) if metadata_path.exists() else None
                 })
             else:
-                print(f"Warning: Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
+                warnings.warn(
+                    f"Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping..."
+                )
 
         print(f"Loaded {len(self.cases)} cases from {split_file}")
 

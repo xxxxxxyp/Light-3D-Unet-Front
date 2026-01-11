@@ -23,7 +23,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.unet3d import Lightweight3DUNet
 from models.losses import get_loss_function
 from models.dataset import get_data_loader
-from models.metrics import calculate_metrics
+from models.metrics import calculate_metrics, DEFAULT_SPACING
 
 
 class Trainer:
@@ -192,7 +192,7 @@ class Trainer:
         all_predictions = []
         all_labels = []
         all_spacings = []
-        target_spacing = tuple(self.config.get("data", {}).get("spacing", {}).get("target", (4.0, 4.0, 4.0)))
+        target_spacing = tuple(self.config.get("data", {}).get("spacing", {}).get("target", DEFAULT_SPACING))
         
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
@@ -222,9 +222,7 @@ class Trainer:
                     all_predictions.append(outputs_np[b])
                     all_labels.append(labels_np[b])
                     if spacings is not None:
-                        if isinstance(spacings, torch.Tensor):
-                            spacing_value = spacings[b]
-                        elif isinstance(spacings, (list, tuple)):
+                        if isinstance(spacings, (torch.Tensor, list, tuple)):
                             spacing_value = spacings[b]
                         else:
                             spacing_value = spacings
@@ -242,6 +240,7 @@ class Trainer:
         default_threshold = self.config["validation"]["default_threshold"]
         thresholds = self.config["validation"].get("threshold_sensitivity_range") or [default_threshold]
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
+        tie_margin = tie_threshold + self.EPS
 
         best_metrics = None
         best_threshold = thresholds[0] if len(thresholds) > 0 else default_threshold
@@ -257,7 +256,7 @@ class Trainer:
             )
             recall = metrics["recall"]
             dsc = metrics["dsc"]
-            if recall > best_recall + self.EPS or (abs(recall - best_recall) <= tie_threshold and dsc > best_dsc + self.EPS):
+            if recall > best_recall + self.EPS or (abs(recall - best_recall) <= tie_margin and dsc > best_dsc + self.EPS):
                 best_recall = recall
                 best_dsc = dsc
                 best_threshold = threshold
@@ -381,6 +380,7 @@ class Trainer:
                 current_metric = current_recall  # Primary metric
                 is_best = False
                 tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
+                tie_margin = tie_threshold + self.EPS
                 
                 if current_metric > self.best_recall + self.EPS:
                     improvement = current_metric - self.best_recall
@@ -391,7 +391,7 @@ class Trainer:
                     self.epochs_without_improvement = 0
                     is_best = True
                     print(f"  *** New best {self.config['metrics']['primary']}: {self.best_recall:.4f} (↑{improvement:.4f}) ***")
-                elif abs(current_metric - self.best_recall) <= tie_threshold and current_dsc > self.best_dsc + self.EPS:
+                elif abs(current_metric - self.best_recall) <= tie_margin and current_dsc > self.best_dsc + self.EPS:
                     improvement = current_dsc - self.best_dsc
                     self.best_recall = current_metric
                     self.best_dsc = current_dsc
