@@ -224,9 +224,9 @@ class Trainer:
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             for batch in pbar:
-                try:
-                    images, labels, _, spacings = batch
-                except (ValueError, TypeError):
+                if isinstance(batch, (list, tuple)) and len(batch) >= 4:
+                    images, labels, _, spacings = batch[0], batch[1], batch[2], batch[3]
+                else:
                     images, labels = batch
                     spacings = None
 
@@ -255,7 +255,11 @@ class Trainer:
                 pbar.set_postfix({"loss": f"{loss.item():.4f}"})
         
         if num_batches == 0:
-            warnings.warn("Validation produced no batches; returning zero metrics.", UserWarning, stacklevel=2)
+            warnings.warn(
+                "No validation batches found. Ensure the validation dataset is populated and data paths are correct. Returning zero metrics.",
+                UserWarning,
+                stacklevel=2
+            )
             empty_metrics = {
                 "dsc": 0.0,
                 "recall": 0.0,

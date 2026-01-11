@@ -44,7 +44,8 @@ class CaseDataset(Dataset):
                 })
             else:
                 warnings.warn(
-                    f"Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...",
+                    f"Case {case_id} missing required files (images found: {len(image_files)}, labels found: {len(label_files)}). "
+                    f"Expected images under {self.data_dir / 'images'} and labels under {self.data_dir / 'labels'}. Skipping case.",
                     UserWarning
                 )
 

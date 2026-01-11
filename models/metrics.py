@@ -9,6 +9,7 @@ from sklearn.metrics import precision_score, recall_score
 
 DEFAULT_SPACING = (4.0, 4.0, 4.0)
 SMOOTH = 1e-6
+SPATIAL_DIMENSIONS = 3
 
 
 def calculate_dsc(pred, target, smooth=SMOOTH):
@@ -297,7 +298,7 @@ def _normalize_spacing_per_case(spacing, num_cases):
             return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
         if len(spacing) == num_cases and isinstance(spacing[0], (list, tuple, np.ndarray)):
             return [tuple(map(float, s)) for s in spacing]
-        if len(spacing) == 3 and all(isinstance(s, (int, float, np.floating)) for s in spacing):
+        if len(spacing) == SPATIAL_DIMENSIONS and all(isinstance(s, (int, float, np.floating)) for s in spacing):
             return [tuple(map(float, spacing)) for _ in range(num_cases)]
     return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
 
@@ -315,10 +316,10 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     Returns:
         metrics: Dictionary with all metrics
     """
-    if not isinstance(predictions, (list, tuple)) and not hasattr(predictions, "shape"):
-        raise TypeError("predictions must be a list/tuple or array-like with a shape attribute")
-    if not isinstance(labels, (list, tuple)) and not hasattr(labels, "shape"):
-        raise TypeError("labels must be a list/tuple or array-like with a shape attribute")
+    if not isinstance(predictions, (list, tuple)) and not (hasattr(predictions, "shape") and hasattr(predictions, "__getitem__")):
+        raise TypeError("predictions must be a list/tuple or array-like object with shape and indexing support")
+    if not isinstance(labels, (list, tuple)) and not (hasattr(labels, "shape") and hasattr(labels, "__getitem__")):
+        raise TypeError("labels must be a list/tuple or array-like object with shape and indexing support")
 
     if isinstance(predictions, (list, tuple)):
         pred_list = list(predictions)
