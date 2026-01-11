@@ -28,6 +28,7 @@ from models.metrics import calculate_metrics
 
 class Trainer:
     """Trainer class for 3D U-Net"""
+    EPS = 1e-8
     
     def __init__(self, config_path):
         """Initialize trainer with configuration"""
@@ -239,9 +240,7 @@ class Trainer:
         avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
 
         default_threshold = self.config["validation"]["default_threshold"]
-        thresholds = self.config["validation"].get("threshold_sensitivity_range", [default_threshold])
-        if not thresholds:
-            thresholds = [default_threshold]
+        thresholds = self.config["validation"].get("threshold_sensitivity_range") or [default_threshold]
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
 
         best_metrics = None
@@ -258,7 +257,7 @@ class Trainer:
             )
             recall = metrics["recall"]
             dsc = metrics["dsc"]
-            if recall > best_recall + 1e-8 or (abs(recall - best_recall) <= tie_threshold and dsc > best_dsc + 1e-8):
+            if recall > best_recall + self.EPS or (abs(recall - best_recall) <= tie_threshold and dsc > best_dsc + self.EPS):
                 best_recall = recall
                 best_dsc = dsc
                 best_threshold = threshold
@@ -383,7 +382,7 @@ class Trainer:
                 is_best = False
                 tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
                 
-                if current_metric > self.best_recall + 1e-8:
+                if current_metric > self.best_recall + self.EPS:
                     improvement = current_metric - self.best_recall
                     self.best_recall = current_metric
                     self.best_dsc = current_dsc
@@ -392,7 +391,7 @@ class Trainer:
                     self.epochs_without_improvement = 0
                     is_best = True
                     print(f"  *** New best {self.config['metrics']['primary']}: {self.best_recall:.4f} (↑{improvement:.4f}) ***")
-                elif abs(current_metric - self.best_recall) <= tie_threshold and current_dsc > self.best_dsc + 1e-8:
+                elif abs(current_metric - self.best_recall) <= tie_threshold and current_dsc > self.best_dsc + self.EPS:
                     improvement = current_dsc - self.best_dsc
                     self.best_recall = current_metric
                     self.best_dsc = current_dsc
