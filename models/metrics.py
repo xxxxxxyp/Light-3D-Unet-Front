@@ -292,7 +292,9 @@ def _normalize_spacing_per_case(spacing, num_cases):
         return []
     if isinstance(spacing, np.ndarray):
         spacing = spacing.tolist()
-    if isinstance(spacing, (list, tuple)) and len(spacing) > 0:
+    if isinstance(spacing, (list, tuple)):
+        if len(spacing) == 0:
+            return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
         if len(spacing) == num_cases and isinstance(spacing[0], (list, tuple, np.ndarray)):
             return [tuple(map(float, s)) for s in spacing]
         if len(spacing) == 3 and all(isinstance(s, (int, float, np.floating)) for s in spacing):

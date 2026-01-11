@@ -46,7 +46,7 @@ class CaseDataset(Dataset):
                 warnings.warn(
                     f"Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...",
                     UserWarning,
-                    stacklevel=2
+                    stacklevel=3
                 )
 
         print(f"Loaded {len(self.cases)} cases from {split_file}")

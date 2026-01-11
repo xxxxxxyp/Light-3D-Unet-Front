@@ -12,6 +12,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import warnings
 from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from datetime import datetime
@@ -29,6 +30,7 @@ from models.metrics import calculate_metrics, DEFAULT_SPACING
 class Trainer:
     """Trainer class for 3D U-Net"""
     EPS = 1e-8
+    VAL_BATCH_WITH_META = 4
     
     def __init__(self, config_path):
         """Initialize trainer with configuration"""
@@ -153,6 +155,20 @@ class Trainer:
         if abs(recall - best_recall) <= tie_margin and dsc > best_dsc + self.EPS:
             return True, False
         return False, False
+
+    def _get_target_spacing(self):
+        return tuple(self.config.get("data", {}).get("spacing", {}).get("target", DEFAULT_SPACING))
+
+    def _resolve_spacing_value(self, spacings, index, target_spacing):
+        if spacings is None:
+            spacing_value = target_spacing
+        elif isinstance(spacings, (torch.Tensor, list, tuple)):
+            spacing_value = spacings[index]
+        else:
+            spacing_value = spacings
+        if isinstance(spacing_value, torch.Tensor):
+            spacing_value = spacing_value.tolist()
+        return tuple(float(s) for s in spacing_value)
     
     def train_epoch(self, epoch):
         """Train for one epoch"""
@@ -200,12 +216,13 @@ class Trainer:
         all_predictions = []
         all_labels = []
         all_spacings = []
-        target_spacing = tuple(self.config.get("data", {}).get("spacing", {}).get("target", DEFAULT_SPACING))
+        target_spacing = self._get_target_spacing()
+        default_threshold = self.config["validation"]["default_threshold"]
         
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             for batch in pbar:
-                if len(batch) == 4:
+                if isinstance(batch, (list, tuple)) and len(batch) == self.VAL_BATCH_WITH_META:
                     images, labels, _, spacings = batch
                 else:
                     images, labels = batch
@@ -229,24 +246,34 @@ class Trainer:
                 for b in range(batch_size):
                     all_predictions.append(outputs_np[b])
                     all_labels.append(labels_np[b])
-                    if spacings is not None:
-                        if isinstance(spacings, (torch.Tensor, list, tuple)):
-                            spacing_value = spacings[b]
-                        else:
-                            spacing_value = spacings
-                    else:
-                        spacing_value = target_spacing
-                    if isinstance(spacing_value, torch.Tensor):
-                        spacing_value = spacing_value.tolist()
-                    all_spacings.append(tuple(float(s) for s in spacing_value))
+                    spacing_value = self._resolve_spacing_value(spacings, b, target_spacing)
+                    all_spacings.append(spacing_value)
                  
                 # Update progress bar
                 pbar.set_postfix({"loss": f"{loss.item():.4f}"})
         
-        avg_loss = total_loss / num_batches if num_batches > 0 else 0.0
+        if num_batches == 0:
+            warnings.warn("Validation produced no batches; returning zero metrics.", UserWarning, stacklevel=2)
+            empty_metrics = {
+                "dsc": 0.0,
+                "recall": 0.0,
+                "precision": 0.0,
+                "fp_per_case": 0.0,
+                "tp": 0,
+                "fp": 0,
+                "fn": 0,
+                "best_threshold": default_threshold,
+                "best_recall": 0.0,
+                "best_dsc": 0.0
+            }
+            return 0.0, empty_metrics
 
-        default_threshold = self.config["validation"]["default_threshold"]
-        thresholds = self.config["validation"].get("threshold_sensitivity_range") or [default_threshold]
+        avg_loss = total_loss / num_batches
+
+        thresholds = self.config["validation"].get("threshold_sensitivity_range", [default_threshold])
+        if not thresholds:
+            warnings.warn("Validation threshold list is empty; falling back to default threshold.", UserWarning, stacklevel=2)
+            thresholds = [default_threshold]
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
         best_threshold = thresholds[0]
         best_metrics = calculate_metrics(
