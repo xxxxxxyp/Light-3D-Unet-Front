@@ -1,242 +1,196 @@
-# FL-70% Lightweight 3D-UNet Configuration
-# Processing Path B: 4×4×4mm spacing preserved
-
-# Experiment Info
-experiment:
-  name: "FL70_Lightweight_3DUNet"
-  seed: 42
-  processing_path: "B"
-  description: "Lightweight 3D-UNet for PET-only lesion candidate recall using FL-70% data"
-
-# Data Configuration
-data:
-  dataset: "Follicular_Lymphoma"
-  total_cases: 123
-  split_ratio:
-    train: 0.70  # FL-70%
-    val: 0.15    # FL-15%
-    test: 0.15   # FL-15% (black box, not to be used)
-  
-  # Path B: No resampling, preserve 4×4×4mm spacing
-  spacing:
-    original: [4.0, 4.0, 4.0]  # z, y, x in mm
-    target: [4.0, 4.0, 4.0]    # No resampling
-  
-  image_size: [144, 144, null]  # x, y, z (variable)
-  
-  # Intensity processing
-  intensity:
-    clip_percentile_low: 0.5
-    clip_percentile_high: 99.5
-    normalization_range: [0, 1]
-  
-  # Patch extraction
-  patch_size: [48, 48, 48]  # z, y, x at 4mm spacing (physical: ~192mm per side)
-  
-  # Connected component thresholds
-  volume_threshold:
-    train_cc: 0.1  # cubic centimeters for training sample filtering
-    inference_cc: 0.5  # cubic centimeters for candidate generation
-  
-  # BBox expansion
-  bbox_expansion_mm: 10.0  # Physical expansion in millimeters
-  bbox_expansion_voxels: 3  # ceil(10mm / 4mm) = 3 voxels at 4mm spacing
-
-# Model Architecture
-model:
-  name: "Lightweight3DUNet"
-  
-  # Encoder channels
-  encoder_channels: [16, 32, 64, 128]
-  start_channels: 16
-  
-  # Architecture features
-  use_grouped_conv: true
-  use_depthwise_separable: true
-  use_residual: true
-  groups: 8  # For grouped convolutions
-  
-  # Normalization and activation
-  normalization: "InstanceNorm3d"
-  activation: "LeakyReLU"
-  leaky_relu_slope: 0.01
-  
-  # Regularization
-  dropout_p: 0.1
-  use_dropout: true
-  
-  # Output
-  output_channels: 1
-  output_activation: "Sigmoid"
-
-# Loss Function
-loss:
-  name: "FocalTverskyLoss"
-  alpha: 0.7  # False negative weight
-  beta: 0.3   # False positive weight
-  gamma: 0.75 # Focal parameter
-  
-  # Fallback option if training is unstable
-  use_combined_loss: false
-  combined_loss_weights:
-    focal_tversky: 0.8
-    bce: 0.2
-
-# Training Configuration
-training:
-  epochs: 200
-  batch_size: 2  # Can increase to 4 if GPU memory allows
-  
-  # Optimizer
-  optimizer: "AdamW"
-  learning_rate: 1.0e-4
-  weight_decay: 1.0e-5
-  
-  # Learning rate scheduler
-  scheduler:
-    name: "CosineAnnealingLR"  # or "ReduceLROnPlateau"
-    # CosineAnnealingLR params
-    T_max: 200
-    eta_min: 1.0e-6
-    # ReduceLROnPlateau params (alternative)
-    # mode: "max"
-    # factor: 0.5
-    # patience: 10
-    # min_lr: 1.0e-6
-  
-  # Warmup
-  use_warmup: true
-  warmup_epochs: 5
-  
-  # Early stopping
-  early_stopping:
-    enabled: true
-    patience: 20  # Epochs without improvement in validation Recall
-    metric: "recall"
-    mode: "max"
-  
-  # Class-balanced sampling
-  class_balanced_sampling:
-    enabled: true
-    lesion_patch_ratio: 0.5  # At least 50% patches with lesions per batch
-    min_lesion_patches_per_batch: 1
-
-# Data Augmentation
+audit:
+  allowed_datasets:
+  - FL
+  forbidden_datasets:
+  - DLBCL
+  git_commit_hash: null
+  save_config_version: true
+  save_environment_info: true
+  save_intermediate_files: true
+  save_processing_scripts_version: true
+  test_set_access: false
 augmentation:
-  # Spatial augmentations
-  random_flip:
-    enabled: true
-    axes: [0, 1, 2]  # z, y, x
-    prob: 0.5
-  
-  random_rotation:
-    enabled: true
-    angle_range: [-15, 15]  # degrees
-    prob: 0.5
-    axes: [[0, 1], [0, 2], [1, 2]]
-  
-  random_scale:
-    enabled: true
-    scale_range: [0.9, 1.1]  # ±10%
-    prob: 0.3
-  
-  # Intensity augmentations
-  intensity_shift:
-    enabled: true
-    shift_range: [-0.1, 0.1]  # ±10%
-    prob: 0.5
-  
   gaussian_noise:
     enabled: true
     mean: 0.0
-    sigma: 0.01
     prob: 0.3
-  
-  # Random crop (ensuring lesion coverage)
+    sigma: 0.01
+  intensity_shift:
+    enabled: true
+    prob: 0.5
+    shift_range:
+    - -0.1
+    - 0.1
   random_crop:
     enabled: true
     ensure_lesion_coverage: true
-
-# Validation & Inference
-validation:
-  # Validation frequency
-  validate_every_n_epochs: 1
-  
-  # Probability threshold
-  default_threshold: 0.3
-  threshold_sensitivity_range: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
-  
-  # Lesion matching criteria
-  lesion_matching:
-    iou_threshold: 0.1
-    center_distance_threshold_mm: 10.0
-
-# Metrics
+  random_flip:
+    axes:
+    - 0
+    - 1
+    - 2
+    enabled: true
+    prob: 0.5
+  random_rotation:
+    angle_range:
+    - -15
+    - 15
+    axes:
+    - - 0
+      - 1
+    - - 0
+      - 2
+    - - 1
+      - 2
+    enabled: true
+    prob: 0.5
+  random_scale:
+    enabled: true
+    prob: 0.3
+    scale_range:
+    - 0.9
+    - 1.1
+data:
+  bbox_expansion_mm: 10.0
+  bbox_expansion_voxels: 3
+  dataset: Follicular_Lymphoma
+  image_size:
+  - 144
+  - 144
+  - null
+  intensity:
+    clip_percentile_high: 99.5
+    clip_percentile_low: 0.5
+    normalization_range:
+    - 0
+    - 1
+  patch_size:
+  - 48
+  - 48
+  - 48
+  spacing:
+    original:
+    - 4.0
+    - 4.0
+    - 4.0
+    target:
+    - 4.0
+    - 4.0
+    - 4.0
+  split_ratio:
+    test: 0.15
+    train: 0.7
+    val: 0.15
+  total_cases: 123
+  volume_threshold:
+    inference_cc: 0.5
+    train_cc: 0.1
+data_dir: data/processed
+experiment:
+  description: Lightweight 3D-UNet for PET-only lesion candidate recall using FL-70%
+    data
+  name: FL70_Lightweight_3DUNet
+  processing_path: B
+  seed: 42
+loss:
+  alpha: 0.7
+  beta: 0.3
+  combined_loss_weights:
+    bce: 0.2
+    focal_tversky: 0.8
+  gamma: 0.75
+  name: FocalTverskyLoss
+  use_combined_loss: false
 metrics:
-  primary: "lesion_wise_recall"  # For model selection
-  secondary:
-    - "voxel_wise_dsc"
-    - "lesion_wise_precision"
-    - "fp_per_case"
-  
-  # Model selection criteria
   model_selection:
-    primary_metric: "lesion_wise_recall"
-    tie_breaker: "voxel_wise_dsc"
-    tie_threshold: 0.01  # 1% difference
-
-# Target Performance (discussive)
-target_performance:
-  lesion_wise_recall: 0.80  # Target ≥ 80%
-  description: "If not achieved, analyze reasons and provide improvement suggestions"
-
-# Output & Logging
+    primary_metric: lesion_wise_recall
+    tie_breaker: voxel_wise_dsc
+    tie_threshold: 0.01
+  primary: lesion_wise_recall
+  secondary:
+  - voxel_wise_dsc
+  - lesion_wise_precision
+  - fp_per_case
+model:
+  activation: LeakyReLU
+  dropout_p: 0.1
+  encoder_channels:
+  - 16
+  - 32
+  - 64
+  - 128
+  groups: 8
+  leaky_relu_slope: 0.01
+  name: Lightweight3DUNet
+  normalization: InstanceNorm3d
+  output_activation: Sigmoid
+  output_channels: 1
+  start_channels: 16
+  use_depthwise_separable: true
+  use_dropout: true
+  use_grouped_conv: true
+  use_residual: true
 output:
-  # Checkpoints
-  save_checkpoints: true
-  checkpoint_dir: "models/checkpoints"
-  save_every_n_epochs: 10
+  bboxes_dir: inference/bboxes
+  best_model_criterion: val_recall
+  best_model_path: models/best_model.pth
+  checkpoint_dir: models/checkpoints
   keep_last_n_checkpoints: 5
-  
-  # Best model
-  best_model_path: "models/best_model.pth"
-  best_model_criterion: "val_recall"
-  
-  # Logs
-  log_dir: "logs"
-  tensorboard_dir: "logs/tensorboard"
-  
-  # Inference outputs
-  prob_maps_dir: "inference/prob_maps"
-  bboxes_dir: "inference/bboxes"
-  metrics_csv: "inference/metrics.csv"
-  
-  # Metadata
-  save_metadata: true
+  log_dir: logs
   metadata_fields:
-    - "case_id"
-    - "orig_spacing"
-    - "image_size"
-    - "suv_calculated"
-    - "clip_values"
-    - "normalization_range"
-    - "patch_size"
-    - "voxel_thresholds"
-    - "processing_timestamp"
-    - "processing_path"
-    - "seed"
-
-# Audit & Reproducibility
-audit:
-  save_intermediate_files: true
-  save_processing_scripts_version: true
-  save_config_version: true
-  save_environment_info: true
-  
-  # Version control
-  git_commit_hash: null  # To be filled during execution
-  
-  # Data isolation
-  allowed_datasets: ["FL"]
-  forbidden_datasets: ["DLBCL"]
-  test_set_access: false
+  - case_id
+  - orig_spacing
+  - image_size
+  - suv_calculated
+  - clip_values
+  - normalization_range
+  - patch_size
+  - voxel_thresholds
+  - processing_timestamp
+  - processing_path
+  - seed
+  metrics_csv: inference/metrics.csv
+  prob_maps_dir: inference/prob_maps
+  save_checkpoints: true
+  save_every_n_epochs: 10
+  save_metadata: true
+  tensorboard_dir: logs/tensorboard
+splits_dir: data/splits
+target_performance:
+  description: If not achieved, analyze reasons and provide improvement suggestions
+  lesion_wise_recall: 0.8
+training:
+  batch_size: 2
+  class_balanced_sampling:
+    enabled: true
+    lesion_patch_ratio: 0.5
+    min_lesion_patches_per_batch: 1
+  early_stopping:
+    enabled: true
+    metric: recall
+    mode: max
+    patience: 20
+  epochs: 200
+  learning_rate: 0.0001
+  optimizer: AdamW
+  scheduler:
+    T_max: 200
+    eta_min: 1.0e-06
+    name: CosineAnnealingLR
+  use_warmup: true
+  warmup_epochs: 5
+  weight_decay: 1.0e-05
+validation:
+  default_threshold: 0.3
+  lesion_matching:
+    center_distance_threshold_mm: 10.0
+    iou_threshold: 0.1
+  threshold_sensitivity_range:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+  - 0.7
+  validate_every_n_epochs: 1
