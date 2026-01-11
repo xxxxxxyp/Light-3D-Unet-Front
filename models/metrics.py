@@ -20,8 +20,8 @@ def calculate_dsc(pred, target, smooth=1e-6):
     Returns:
         dsc: Dice coefficient
     """
-    pred = pred.flatten()
-    target = target.flatten()
+    pred = np.ravel(pred)
+    target = np.ravel(target)
     
     intersection = (pred * target).sum()
     union = pred.sum() + target.sum()
@@ -100,6 +100,26 @@ def calculate_center_distance(pred_component, target_component, spacing=(1.0, 1.
     return distance
 
 
+def _compute_component_centers(labeled):
+    """Compute centers of mass for all components in a labeled volume."""
+    if labeled.size == 0:
+        return np.empty((0, 3), dtype=np.float64)
+    num_components = int(labeled.max())
+    if num_components == 0:
+        return np.empty((0, 3), dtype=np.float64)
+    
+    indices = np.arange(1, num_components + 1)
+    centers = ndimage.center_of_mass(
+        np.ones_like(labeled, dtype=np.float32),
+        labels=labeled,
+        index=indices
+    )
+    centers = np.atleast_2d(np.asarray(centers, dtype=np.float64))
+    if centers.shape[1] > 3:
+        centers = centers[:, :3]
+    return centers
+
+
 def match_components(pred_labeled, target_labeled, iou_threshold=0.1,
                     distance_threshold_mm=10.0, spacing=(4.0, 4.0, 4.0)):
     """
@@ -117,48 +137,74 @@ def match_components(pred_labeled, target_labeled, iou_threshold=0.1,
         unmatched_pred: List of unmatched prediction component IDs
         unmatched_target: List of unmatched target component IDs
     """
-    num_pred = pred_labeled.max()
-    num_target = target_labeled.max()
+    num_pred = int(pred_labeled.max())
+    num_target = int(target_labeled.max())
     
     if num_pred == 0 or num_target == 0:
         return [], list(range(1, num_pred + 1)), list(range(1, num_target + 1))
     
-    # Calculate IoU and distance for all pairs
+    pred_flat = np.ravel(pred_labeled).astype(np.int64, copy=False)
+    target_flat = np.ravel(target_labeled).astype(np.int64, copy=False)
+    
+    # Intersection counts for all component pairs using encoded indices
+    pair_offset = np.int64(num_target + 1)
+    max_index = (np.int64(num_pred) + 1) * pair_offset
+    combined_idx = pred_flat * pair_offset + target_flat
+    intersection = np.bincount(
+        combined_idx,
+        minlength=max_index
+    ).reshape(num_pred + 1, num_target + 1)
+    intersection[0, :] = 0
+    intersection[:, 0] = 0
+    
+    pred_sizes = np.bincount(pred_flat, minlength=num_pred + 1)
+    target_sizes = np.bincount(target_flat, minlength=num_target + 1)
+    
+    union = pred_sizes[:, None] + target_sizes[None, :] - intersection
+    iou_matrix = np.divide(
+        intersection,
+        union,
+        out=np.zeros_like(intersection, dtype=np.float32),
+        where=union > 0
+    )
+    
+    # Precompute component centers (in mm)
+    spacing_arr = np.asarray(spacing, dtype=np.float64)
+    pred_centers = _compute_component_centers(pred_labeled) * spacing_arr
+    target_centers = _compute_component_centers(target_labeled) * spacing_arr
+    if pred_centers.size and target_centers.size:
+        diff = pred_centers[:, None, :] - target_centers[None, :, :]
+        distance_matrix = np.linalg.norm(diff, axis=2)
+    else:
+        # If either side is empty, use inf to prevent distance-based matches
+        distance_matrix = np.full((num_pred, num_target), np.inf, dtype=np.float64)
+    
     matches = []
     matched_pred = set()
-    matched_target = set()
+    matched_target_mask = np.zeros(num_target, dtype=bool)
     
     for pred_id in range(1, num_pred + 1):
-        pred_mask = pred_labeled == pred_id
+        iou_row = iou_matrix[pred_id, 1:]
+        if distance_matrix.size > 0:
+            distance_row = distance_matrix[pred_id - 1]
+            distance_criteria = distance_row <= distance_threshold_mm
+            valid_mask = ~matched_target_mask & (
+                (iou_row >= iou_threshold) | distance_criteria
+            )
+        else:
+            valid_mask = ~matched_target_mask & (iou_row >= iou_threshold)
+        if not np.any(valid_mask):
+            continue
         
-        best_iou = 0.0
-        best_target_id = None
-        
-        for target_id in range(1, num_target + 1):
-            if target_id in matched_target:
-                continue
-            
-            target_mask = target_labeled == target_id
-            
-            # Check IoU
-            iou = calculate_iou(pred_mask, target_mask)
-            
-            # Check center distance
-            distance = calculate_center_distance(pred_mask, target_mask, spacing)
-            
-            # Match if either criterion is met
-            if iou >= iou_threshold or distance <= distance_threshold_mm:
-                if iou > best_iou:
-                    best_iou = iou
-                    best_target_id = target_id
-        
-        if best_target_id is not None:
-            matches.append((pred_id, best_target_id))
-            matched_pred.add(pred_id)
-            matched_target.add(best_target_id)
+        candidate_ious = np.where(valid_mask, iou_row, -np.inf)
+        best_target_idx = int(np.argmax(candidate_ious))
+        best_target_id = best_target_idx + 1
+        matches.append((pred_id, best_target_id))
+        matched_pred.add(pred_id)
+        matched_target_mask[best_target_idx] = True
     
     unmatched_pred = [i for i in range(1, num_pred + 1) if i not in matched_pred]
-    unmatched_target = [i for i in range(1, num_target + 1) if i not in matched_target]
+    unmatched_target = [i for i in range(1, num_target + 1) if not matched_target_mask[i - 1]]
     
     return matches, unmatched_pred, unmatched_target
 
@@ -186,6 +232,10 @@ def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
         pred = pred[:, 0, :, :, :]  # Remove channel dimension
     if len(target.shape) == 5:
         target = target[:, 0, :, :, :]
+    if len(pred.shape) == 4 and pred.shape[0] == 1:
+        pred = pred[0]
+    if len(target.shape) == 4 and target.shape[0] == 1:
+        target = target[0]
     
     # Binarize prediction
     pred_binary = (pred >= threshold).astype(np.int32)
@@ -249,10 +299,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=(4.0, 4.0, 4.0
     batch_size = predictions.shape[0]
     
     # Voxel-wise metrics
-    pred_binary = (predictions >= threshold).astype(np.float32)
-    label_binary = (labels >= 0.5).astype(np.float32)
-    
-    voxel_dsc = calculate_dsc(pred_binary, label_binary)
+    voxel_dsc = calculate_dsc(predictions >= threshold, labels >= 0.5)
     
     # Lesion-wise metrics (aggregate over batch)
     total_tp = 0
