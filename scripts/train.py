@@ -145,6 +145,14 @@ class Trainer:
             "val_best_threshold": [],
             "learning_rate": []
         }
+
+    def _is_better_metric(self, recall, dsc, best_recall, best_dsc, tie_threshold):
+        tie_margin = tie_threshold + self.EPS
+        if recall > best_recall + self.EPS:
+            return True, True
+        if abs(recall - best_recall) <= tie_margin and dsc > best_dsc + self.EPS:
+            return True, False
+        return False, False
     
     def train_epoch(self, epoch):
         """Train for one epoch"""
@@ -240,37 +248,35 @@ class Trainer:
         default_threshold = self.config["validation"]["default_threshold"]
         thresholds = self.config["validation"].get("threshold_sensitivity_range") or [default_threshold]
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
-        tie_margin = tie_threshold + self.EPS
+        best_threshold = thresholds[0]
+        best_metrics = calculate_metrics(
+            all_predictions,
+            all_labels,
+            threshold=best_threshold,
+            spacing=all_spacings if all_spacings else target_spacing
+        )
+        best_recall = best_metrics["recall"]
+        best_dsc = best_metrics["dsc"]
 
-        best_metrics = None
-        best_threshold = thresholds[0] if len(thresholds) > 0 else default_threshold
-        best_recall = -1.0
-        best_dsc = -1.0
-
-        for threshold in thresholds:
+        for threshold in thresholds[1:]:
             metrics = calculate_metrics(
                 all_predictions,
                 all_labels,
                 threshold=threshold,
                 spacing=all_spacings if all_spacings else target_spacing
             )
-            recall = metrics["recall"]
-            dsc = metrics["dsc"]
-            if recall > best_recall + self.EPS or (abs(recall - best_recall) <= tie_margin and dsc > best_dsc + self.EPS):
-                best_recall = recall
-                best_dsc = dsc
+            is_better, _ = self._is_better_metric(
+                metrics["recall"],
+                metrics["dsc"],
+                best_recall,
+                best_dsc,
+                tie_threshold
+            )
+            if is_better:
+                best_recall = metrics["recall"]
+                best_dsc = metrics["dsc"]
                 best_threshold = threshold
                 best_metrics = metrics
-
-        if best_metrics is None:
-            best_metrics = calculate_metrics(
-                all_predictions,
-                all_labels,
-                threshold=default_threshold,
-                spacing=all_spacings if all_spacings else target_spacing
-            )
-            best_recall = best_metrics["recall"]
-            best_dsc = best_metrics["dsc"]
 
         best_metrics["best_threshold"] = best_threshold
         best_metrics["best_recall"] = best_recall
@@ -380,26 +386,27 @@ class Trainer:
                 current_metric = current_recall  # Primary metric
                 is_best = False
                 tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
-                tie_margin = tie_threshold + self.EPS
                 
-                if current_metric > self.best_recall + self.EPS:
-                    improvement = current_metric - self.best_recall
-                    self.best_recall = current_metric
+                better_metric, recall_improved = self._is_better_metric(
+                    current_metric,
+                    current_dsc,
+                    self.best_recall,
+                    self.best_dsc,
+                    tie_threshold
+                )
+
+                if better_metric:
+                    improvement = (current_metric - self.best_recall) if recall_improved else (current_dsc - self.best_dsc)
+                    self.best_recall = max(self.best_recall, current_metric)
                     self.best_dsc = current_dsc
                     self.best_metric = self.best_recall
                     self.best_epoch = epoch
                     self.epochs_without_improvement = 0
                     is_best = True
-                    print(f"  *** New best {self.config['metrics']['primary']}: {self.best_recall:.4f} (↑{improvement:.4f}) ***")
-                elif abs(current_metric - self.best_recall) <= tie_margin and current_dsc > self.best_dsc + self.EPS:
-                    improvement = current_dsc - self.best_dsc
-                    self.best_recall = current_metric
-                    self.best_dsc = current_dsc
-                    self.best_metric = self.best_recall
-                    self.best_epoch = epoch
-                    self.epochs_without_improvement = 0
-                    is_best = True
-                    print(f"  *** Tie-broken improvement with DSC {self.best_dsc:.4f} (↑{improvement:.4f}) ***")
+                    if recall_improved:
+                        print(f"  *** New best {self.config['metrics']['primary']}: {self.best_recall:.4f} (↑{improvement:.4f}) ***")
+                    else:
+                        print(f"  *** Tie-broken improvement with DSC {self.best_dsc:.4f} (↑{improvement:.4f}) ***")
                 else:
                     self.epochs_without_improvement += 1
                     print(f"  No improvement for {self.epochs_without_improvement} epochs (best recall: {self.best_recall:.4f} at epoch {self.best_epoch+1})")

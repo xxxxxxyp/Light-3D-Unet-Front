@@ -288,6 +288,8 @@ def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
 
 def _normalize_spacing_per_case(spacing, num_cases):
     """Return a spacing list for each case."""
+    if num_cases == 0:
+        return []
     if isinstance(spacing, np.ndarray):
         spacing = spacing.tolist()
     if isinstance(spacing, (list, tuple)) and len(spacing) > 0:
