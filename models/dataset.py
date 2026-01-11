@@ -280,7 +280,7 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         dataset,
         batch_size=config["training"]["batch_size"],
         shuffle=is_train,
-        num_workers=4,
+        num_workers=16,
         pin_memory=True
     )
     

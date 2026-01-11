@@ -266,7 +266,7 @@ def main():
     
     # Load configuration
     import yaml
-    with open(args.config, "r") as f:
+    with open(args.config, "r", encoding='utf-8') as f:
         full_config = yaml.safe_load(f)
     
     # Extract preprocessing configuration

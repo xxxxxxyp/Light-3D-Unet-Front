@@ -153,6 +153,7 @@ class Trainer:
         for batch_idx, (images, labels) in enumerate(pbar):
             images = images.to(self.device)
             labels = labels.to(self.device)
+            images = images.float()
             
             # Forward pass
             outputs = self.model(images)
@@ -369,7 +370,7 @@ def main():
     args = parser.parse_args()
     
     # Load config and override if specified
-    with open(args.config, "r") as f:
+    with open(args.config, "r", encoding='utf-8') as f:
         config = yaml.safe_load(f)
     
     if args.data_dir:
