@@ -308,13 +308,19 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     Calculate all metrics for a batch of predictions
     
     Args:
-        predictions: Predicted probability maps [B, 1, D, H, W]
-        labels: Ground truth binary masks [B, 1, D, H, W]
+        predictions: Predicted probability maps [B, 1, D, H, W] or list of arrays
+        labels: Ground truth binary masks [B, 1, D, H, W] or list of arrays
         threshold: Probability threshold
-        spacing: Voxel spacing
+        spacing: Voxel spacing (single tuple or list of tuples per case)
     
     Returns:
-        metrics: Dictionary with all metrics
+        metrics: Dictionary with all metrics including:
+            - lesion_wise_recall, lesion_wise_precision, lesion_wise_f1
+            - voxel_wise_dsc_micro (global DSC across all voxels)
+            - voxel_wise_dsc_macro (mean of per-case DSC)
+            - fp_per_case
+            - tp, fp, fn (lesion counts)
+            - Backward compatibility aliases: dsc, recall, precision
     """
     if not isinstance(predictions, (list, tuple)) and not (hasattr(predictions, "shape") and hasattr(predictions, "__getitem__")):
         raise TypeError("predictions must be a list/tuple or array-like object with shape and indexing support")
@@ -339,6 +345,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     total_fn = 0
     intersection_sum = 0.0
     union_sum = 0.0
+    per_case_dsc_list = []
 
     for pred, target, spacing_item in zip(pred_list, label_list, spacing_list):
         pred_array = np.asarray(pred)
@@ -347,8 +354,13 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         pred_binary = (pred_array >= threshold).astype(np.int32)
         target_binary = (target_array >= 0.5).astype(np.int32)
 
+        # Accumulate for micro DSC
         intersection_sum += (pred_binary * target_binary).sum()
         union_sum += pred_binary.sum() + target_binary.sum()
+
+        # Calculate per-case DSC for macro DSC
+        case_dsc = calculate_dsc(pred_binary, target_binary, smooth=SMOOTH)
+        per_case_dsc_list.append(case_dsc)
 
         lesion_metrics = calculate_lesion_metrics(
             pred_array,
@@ -364,19 +376,31 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         total_fp += lesion_metrics["fp"]
         total_fn += lesion_metrics["fn"]
 
-    voxel_dsc = (2.0 * intersection_sum + SMOOTH) / (union_sum + SMOOTH)
+    # Voxel-wise metrics
+    voxel_dsc_micro = (2.0 * intersection_sum + SMOOTH) / (union_sum + SMOOTH)
+    voxel_dsc_macro = np.mean(per_case_dsc_list) if per_case_dsc_list else 0.0
+    
+    # Lesion-wise metrics
     lesion_recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
     lesion_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+    lesion_f1 = (2 * lesion_precision * lesion_recall) / (lesion_precision + lesion_recall) if (lesion_precision + lesion_recall) > 0 else 0.0
     fp_per_case = total_fp / num_cases if num_cases > 0 else 0.0
 
     return {
-        "dsc": voxel_dsc,
-        "recall": lesion_recall,
-        "precision": lesion_precision,
+        # New clearer keys
+        "lesion_wise_recall": lesion_recall,
+        "lesion_wise_precision": lesion_precision,
+        "lesion_wise_f1": lesion_f1,
+        "voxel_wise_dsc_micro": voxel_dsc_micro,
+        "voxel_wise_dsc_macro": voxel_dsc_macro,
         "fp_per_case": fp_per_case,
         "tp": total_tp,
         "fp": total_fp,
-        "fn": total_fn
+        "fn": total_fn,
+        # Backward compatibility aliases
+        "dsc": voxel_dsc_micro,
+        "recall": lesion_recall,
+        "precision": lesion_precision
     }
 
 

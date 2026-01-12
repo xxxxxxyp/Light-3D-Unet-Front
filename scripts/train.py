@@ -25,6 +25,7 @@ from models.unet3d import Lightweight3DUNet
 from models.losses import get_loss_function
 from models.dataset import get_data_loader
 from models.metrics import calculate_metrics, DEFAULT_SPACING
+from models.utils import sliding_window_inference_3d
 
 
 class Trainer:
@@ -209,78 +210,112 @@ class Trainer:
         return avg_loss
     
     def validate(self, epoch):
-        """Validate model"""
-        self.model.eval()
+        """
+        Validate model using sliding window inference on full cases.
         
-        total_loss = 0.0
-        num_batches = 0
+        Args:
+            epoch: Current epoch number
+            
+        Returns:
+            avg_loss: Average validation loss (0.0 for case-level validation)
+            best_metrics: Dictionary with best metrics after threshold sweep
+        """
+        self.model.eval()
         
         all_predictions = []
         all_labels = []
         all_spacings = []
         target_spacing = self._get_target_spacing()
         default_threshold = self.config["validation"]["default_threshold"]
+        patch_size = tuple(self.config["data"]["patch_size"])
         
+        # Validation uses CaseDataset which returns full volumes
+        # No gradients needed during validation
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             for batch in pbar:
+                # CaseDataset returns: (image, label, case_id, spacing)
                 if isinstance(batch, (list, tuple)) and len(batch) >= 4:
-                    images, labels, _, spacings = batch[0], batch[1], batch[2], batch[3]
+                    images, labels, case_ids, spacings = batch[0], batch[1], batch[2], batch[3]
                 else:
-                    images, labels = batch
+                    # Fallback for unexpected format
+                    images, labels = batch[0], batch[1]
                     spacings = None
-
-                images = images.to(self.device)
-                labels = labels.to(self.device)
                 
-                # Forward pass
-                outputs = self.model(images)
-                loss = self.criterion(outputs, labels)
-                
-                # Update metrics
-                total_loss += loss.item()
-                num_batches += 1
-                
-                outputs_np = outputs.cpu().numpy()
-                labels_np = labels.cpu().numpy()
-                batch_size = outputs_np.shape[0]
-
+                # Process each case (batch_size=1 for CaseDataset)
+                batch_size = images.shape[0]
                 for b in range(batch_size):
-                    all_predictions.append(outputs_np[b])
-                    all_labels.append(labels_np[b])
-                    spacing_value = self._resolve_spacing_value(spacings, b, target_spacing)
+                    # Get single case data - safely handle different tensor shapes
+                    # CaseDataset returns [B, C, D, H, W] where C=1
+                    if images.ndim == 5:
+                        image = images[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                        label = labels[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                    elif images.ndim == 4:
+                        # In case batch dimension is already removed
+                        image = images[0].cpu().numpy() if b == 0 else images[b].cpu().numpy()
+                        label = labels[0].cpu().numpy() if b == 0 else labels[b].cpu().numpy()
+                    else:
+                        raise ValueError(f"Unexpected image shape: {images.shape}")
+                    
+                    # Perform sliding window inference
+                    prob_map = sliding_window_inference_3d(
+                        image=image,
+                        model=self.model,
+                        patch_size=patch_size,
+                        overlap=0.5,
+                        device=self.device,
+                        use_gaussian=True
+                    )
+                    
+                    # Store predictions and labels
+                    all_predictions.append(prob_map)
+                    all_labels.append(label)
+                    
+                    # Resolve spacing for this case
+                    if spacings is not None:
+                        spacing_value = self._resolve_spacing_value(spacings, b, target_spacing)
+                    else:
+                        spacing_value = target_spacing
                     all_spacings.append(spacing_value)
-                 
-                # Update progress bar
-                pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+                    
+                    # Update progress bar
+                    pbar.set_postfix({"cases": f"{len(all_predictions)}"})
         
-        if num_batches == 0:
+        if len(all_predictions) == 0:
             warnings.warn(
-                "No validation batches found. Ensure the validation dataset is populated and data paths are correct. Returning zero metrics.",
+                "No validation cases found. Ensure the validation dataset is populated and data paths are correct. Returning zero metrics.",
                 UserWarning,
                 stacklevel=2
             )
             empty_metrics = {
-                "dsc": 0.0,
-                "recall": 0.0,
-                "precision": 0.0,
+                "lesion_wise_recall": 0.0,
+                "lesion_wise_precision": 0.0,
+                "lesion_wise_f1": 0.0,
+                "voxel_wise_dsc_micro": 0.0,
+                "voxel_wise_dsc_macro": 0.0,
                 "fp_per_case": 0.0,
                 "tp": 0,
                 "fp": 0,
                 "fn": 0,
                 "best_threshold": default_threshold,
                 "best_recall": 0.0,
-                "best_dsc": 0.0
+                "best_dsc_macro": 0.0,
+                # Backward compatibility
+                "dsc": 0.0,
+                "recall": 0.0,
+                "precision": 0.0
             }
             return 0.0, empty_metrics
-
-        avg_loss = total_loss / num_batches
-
+        
+        # Perform threshold sweep to find best threshold
         thresholds = self.config["validation"].get("threshold_sensitivity_range", [default_threshold])
         if not thresholds:
             warnings.warn("Validation threshold list is empty; falling back to default threshold.", UserWarning, stacklevel=2)
             thresholds = [default_threshold]
+        
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
+        
+        # Evaluate at first threshold
         best_threshold = thresholds[0]
         best_metrics = calculate_metrics(
             all_predictions,
@@ -288,9 +323,10 @@ class Trainer:
             threshold=best_threshold,
             spacing=all_spacings if all_spacings else target_spacing
         )
-        best_recall = best_metrics["recall"]
-        best_dsc = best_metrics["dsc"]
-
+        best_recall = best_metrics["lesion_wise_recall"]
+        best_dsc_macro = best_metrics["voxel_wise_dsc_macro"]
+        
+        # Sweep through remaining thresholds
         for threshold in thresholds[1:]:
             metrics = calculate_metrics(
                 all_predictions,
@@ -298,26 +334,31 @@ class Trainer:
                 threshold=threshold,
                 spacing=all_spacings if all_spacings else target_spacing
             )
+            
+            # Use macro DSC for tie-breaking (as per requirements)
             is_better, _ = self._is_better_metric(
-                metrics["recall"],
-                metrics["dsc"],
+                metrics["lesion_wise_recall"],
+                metrics["voxel_wise_dsc_macro"],
                 best_recall,
-                best_dsc,
+                best_dsc_macro,
                 tie_threshold
             )
+            
             if is_better:
-                best_recall = metrics["recall"]
-                best_dsc = metrics["dsc"]
+                best_recall = metrics["lesion_wise_recall"]
+                best_dsc_macro = metrics["voxel_wise_dsc_macro"]
                 best_threshold = threshold
                 best_metrics = metrics
-
+        
+        # Add best threshold and metrics to return dict
         best_metrics["best_threshold"] = best_threshold
         best_metrics["best_recall"] = best_recall
-        best_metrics["best_dsc"] = best_dsc
-
-        print(f"Validation sweep - best recall: {best_recall:.4f} at threshold {best_threshold:.2f}")
+        best_metrics["best_dsc_macro"] = best_dsc_macro
         
-        return avg_loss, best_metrics
+        print(f"Validation sweep - best recall: {best_recall:.4f} at threshold {best_threshold:.2f}, DSC macro: {best_dsc_macro:.4f}")
+        
+        # Return 0.0 for loss since we don't compute it during case-level validation
+        return 0.0, best_metrics
     
     def save_checkpoint(self, epoch, is_best=False):
         """Save model checkpoint"""
@@ -383,26 +424,32 @@ class Trainer:
                 # Get current learning rate
                 current_lr = self.optimizer.param_groups[0]["lr"]
 
-                current_recall = val_metrics.get("best_recall", val_metrics["recall"])
-                current_dsc = val_metrics.get("best_dsc", val_metrics["dsc"])
+                # Extract metrics using new clearer keys, with fallback to old keys
+                current_recall = val_metrics.get("best_recall", val_metrics.get("lesion_wise_recall", val_metrics.get("recall", 0.0)))
+                current_dsc_macro = val_metrics.get("best_dsc_macro", val_metrics.get("voxel_wise_dsc_macro", 0.0))
+                current_dsc_micro = val_metrics.get("voxel_wise_dsc_micro", val_metrics.get("dsc", 0.0))
+                current_precision = val_metrics.get("lesion_wise_precision", val_metrics.get("precision", 0.0))
                 current_threshold = val_metrics.get("best_threshold", self.config["validation"]["default_threshold"])
+                current_fp_per_case = val_metrics.get("fp_per_case", 0.0)
                 
-                # Update history
+                # Update history with new metric names
                 self.history["train_loss"].append(train_loss)
                 self.history["val_loss"].append(val_loss)
                 self.history["val_recall"].append(current_recall)
-                self.history["val_precision"].append(val_metrics["precision"])
-                self.history["val_dsc"].append(current_dsc)
-                self.history["val_fp_per_case"].append(val_metrics.get("fp_per_case", 0.0))
+                self.history["val_precision"].append(current_precision)
+                self.history["val_dsc"].append(current_dsc_macro)  # Use macro DSC for tracking
+                self.history["val_fp_per_case"].append(current_fp_per_case)
                 self.history["val_best_threshold"].append(current_threshold)
                 self.history["learning_rate"].append(current_lr)
                 
-                # Log to tensorboard
+                # Log to tensorboard with clearer names
                 self.writer.add_scalar("Loss/train", train_loss, epoch)
                 self.writer.add_scalar("Loss/val", val_loss, epoch)
-                self.writer.add_scalar("Metrics/recall", current_recall, epoch)
-                self.writer.add_scalar("Metrics/precision", val_metrics["precision"], epoch)
-                self.writer.add_scalar("Metrics/dsc", current_dsc, epoch)
+                self.writer.add_scalar("Metrics/lesion_wise_recall", current_recall, epoch)
+                self.writer.add_scalar("Metrics/lesion_wise_precision", current_precision, epoch)
+                self.writer.add_scalar("Metrics/voxel_wise_dsc_macro", current_dsc_macro, epoch)
+                self.writer.add_scalar("Metrics/voxel_wise_dsc_micro", current_dsc_micro, epoch)
+                self.writer.add_scalar("Metrics/fp_per_case", current_fp_per_case, epoch)
                 self.writer.add_scalar("Metrics/best_threshold", current_threshold, epoch)
                 self.writer.add_scalar("Learning_Rate", current_lr, epoch)
                 
@@ -410,28 +457,30 @@ class Trainer:
                 print(f"\nEpoch {epoch+1}/{epochs}")
                 print(f"  Train Loss: {train_loss:.4f}")
                 print(f"  Val Loss: {val_loss:.4f}")
-                print(f"  Val Recall: {current_recall:.4f} (best threshold: {current_threshold:.2f})")
-                print(f"  Val Precision: {val_metrics['precision']:.4f}")
-                print(f"  Val DSC: {current_dsc:.4f}")
+                print(f"  Val Lesion-wise Recall: {current_recall:.4f} (best threshold: {current_threshold:.2f})")
+                print(f"  Val Lesion-wise Precision: {current_precision:.4f}")
+                print(f"  Val Voxel-wise DSC (macro): {current_dsc_macro:.4f}")
+                print(f"  Val Voxel-wise DSC (micro): {current_dsc_micro:.4f}")
+                print(f"  Val FP per case: {current_fp_per_case:.2f}")
                 print(f"  Learning Rate: {current_lr:.6f}")
                 
-                # Check for improvement
+                # Check for improvement (use macro DSC for tie-breaking as per requirements)
                 current_metric = current_recall  # Primary metric
                 is_best = False
                 tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
                 
                 better_metric, recall_improved = self._is_better_metric(
                     current_metric,
-                    current_dsc,
+                    current_dsc_macro,
                     self.best_recall,
                     self.best_dsc,
                     tie_threshold
                 )
 
                 if better_metric:
-                    improvement = (current_metric - self.best_recall) if recall_improved else (current_dsc - self.best_dsc)
+                    improvement = (current_metric - self.best_recall) if recall_improved else (current_dsc_macro - self.best_dsc)
                     self.best_recall = current_metric
-                    self.best_dsc = current_dsc
+                    self.best_dsc = current_dsc_macro
                     self.best_metric = self.best_recall
                     self.best_epoch = epoch
                     self.epochs_without_improvement = 0
