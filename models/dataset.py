@@ -153,6 +153,15 @@ class PatchDataset(Dataset):
         random.seed(seed)
         np.random.seed(seed)
         
+        # Default to FL-only training data when no domain is specified
+        if domain_config is None:
+            domain_config = {
+                'domain': 'fl',
+                'fl_prefix_max': 122,
+                'dlbcl_prefix_min': 1000,
+                'dlbcl_prefix_max': 1422
+            }
+        
         # Load case list
         with open(split_file, "r") as f:
             all_case_ids = [line.strip() for line in f if line.strip()]
