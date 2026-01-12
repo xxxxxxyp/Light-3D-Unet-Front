@@ -123,6 +123,14 @@ class Trainer:
             is_train=False
         )
         
+        # Log mixed training status
+        if self.use_mixed_training:
+            mixed_config = self.config.get("training", {}).get("mixed_domains", {})
+            print(f"\n*** Mixed Domain Training Enabled ***")
+            print(f"  FL ratio: {mixed_config.get('fl_ratio', 0.5):.2%}")
+            print(f"  Validation: FL-only")
+            print(f"  Val cases: {len(self.val_loader.dataset)} FL cases")
+        
         # Setup logging
         log_dir = Path(self.config["output"]["log_dir"])
         log_dir.mkdir(parents=True, exist_ok=True)
