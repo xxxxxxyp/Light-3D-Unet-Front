@@ -1,0 +1,110 @@
+"""
+Test script for mixed domain training functionality
+"""
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from models.dataset import filter_cases_by_domain
+
+def test_domain_filtering():
+    """Test domain filtering functionality"""
+    print("Testing domain filtering...")
+    
+    # Create test case IDs
+    test_cases = [
+        '0000', '0001', '0050', '0100', '0122',  # FL cases
+        '1000', '1100', '1200', '1422',  # DLBCL cases
+        '0200', '0500', '2000'  # Edge cases
+    ]
+    
+    # Test FL filtering
+    fl_config = {
+        'domain': 'fl',
+        'fl_prefix_max': 122,
+        'dlbcl_prefix_min': 1000,
+        'dlbcl_prefix_max': 1422
+    }
+    
+    fl_cases = filter_cases_by_domain(test_cases, fl_config)
+    print(f"FL cases (expected 0000-0122): {fl_cases}")
+    assert set(fl_cases) == {'0000', '0001', '0050', '0100', '0122'}
+    print("✓ FL filtering works correctly")
+    
+    # Test DLBCL filtering
+    dlbcl_config = {
+        'domain': 'dlbcl',
+        'fl_prefix_max': 122,
+        'dlbcl_prefix_min': 1000,
+        'dlbcl_prefix_max': 1422
+    }
+    
+    dlbcl_cases = filter_cases_by_domain(test_cases, dlbcl_config)
+    print(f"DLBCL cases (expected 1000-1422): {dlbcl_cases}")
+    assert set(dlbcl_cases) == {'1000', '1100', '1200', '1422'}
+    print("✓ DLBCL filtering works correctly")
+    
+    # Test no filtering
+    all_cases = filter_cases_by_domain(test_cases, None)
+    print(f"All cases (no filter): {all_cases}")
+    assert len(all_cases) == len(test_cases)
+    print("✓ No filtering works correctly")
+    
+    print("\n✓ All domain filtering tests passed!")
+
+def test_mixed_dataset_import():
+    """Test that MixedPatchDataset can be imported"""
+    print("\nTesting MixedPatchDataset import...")
+    try:
+        from models.dataset import MixedPatchDataset
+        print("✓ MixedPatchDataset imported successfully")
+    except ImportError as e:
+        print(f"✗ Failed to import MixedPatchDataset: {e}")
+        return False
+    return True
+
+def test_config_schema():
+    """Test that config schema is valid"""
+    print("\nTesting config schema...")
+    import yaml
+    
+    try:
+        with open('configs/unet_fl70.yaml', 'r') as f:
+            config = yaml.safe_load(f)
+        
+        # Check for domains config
+        assert 'domains' in config['data'], "Missing 'domains' in data config"
+        assert 'fl_prefix_max' in config['data']['domains']
+        assert 'dlbcl_prefix_min' in config['data']['domains']
+        assert 'dlbcl_prefix_max' in config['data']['domains']
+        print("✓ Domain config schema is valid")
+        
+        # Check for mixed_domains config
+        assert 'mixed_domains' in config['training'], "Missing 'mixed_domains' in training config"
+        assert 'enabled' in config['training']['mixed_domains']
+        assert 'fl_ratio' in config['training']['mixed_domains']
+        print("✓ Mixed training config schema is valid")
+        
+        print("✓ All config schema tests passed!")
+        return True
+    except Exception as e:
+        print(f"✗ Config schema test failed: {e}")
+        return False
+
+if __name__ == "__main__":
+    try:
+        test_domain_filtering()
+        test_mixed_dataset_import()
+        test_config_schema()
+        print("\n" + "="*50)
+        print("All tests passed successfully! ✓")
+        print("="*50)
+    except AssertionError as e:
+        print(f"\n✗ Test failed: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"\n✗ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

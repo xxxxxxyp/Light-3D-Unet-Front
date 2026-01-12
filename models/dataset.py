@@ -18,16 +18,73 @@ from scipy.ndimage import rotate, zoom
 from .utils import find_case_files
 
 
+def filter_cases_by_domain(case_ids, domain_config):
+    """
+    Filter case IDs by domain based on case ID prefix.
+    
+    Args:
+        case_ids: List of case IDs (e.g., ['0001', '0002', '1000'])
+        domain_config: Domain configuration dict with keys:
+            - fl_prefix_max: Maximum FL case prefix (e.g., 122)
+            - dlbcl_prefix_min: Minimum DLBCL case prefix (e.g., 1000)
+            - dlbcl_prefix_max: Maximum DLBCL case prefix (e.g., 1422)
+            - domain: 'fl', 'dlbcl', or None (None = all cases)
+    
+    Returns:
+        Filtered list of case IDs
+    """
+    if domain_config is None or domain_config.get('domain') is None:
+        return case_ids
+    
+    domain = domain_config.get('domain', '').lower()
+    fl_prefix_max = domain_config.get('fl_prefix_max', 122)
+    dlbcl_prefix_min = domain_config.get('dlbcl_prefix_min', 1000)
+    dlbcl_prefix_max = domain_config.get('dlbcl_prefix_max', 1422)
+    
+    filtered = []
+    for case_id in case_ids:
+        try:
+            # Extract numeric prefix from case ID (first 4 digits)
+            prefix = int(case_id[:4])
+            
+            if domain == 'fl':
+                # FL cases: 0000-0122
+                if prefix <= fl_prefix_max:
+                    filtered.append(case_id)
+            elif domain == 'dlbcl':
+                # DLBCL cases: 1000-1422
+                if dlbcl_prefix_min <= prefix <= dlbcl_prefix_max:
+                    filtered.append(case_id)
+            else:
+                # Unknown domain, keep all
+                filtered.append(case_id)
+        except (ValueError, IndexError):
+            # If case ID doesn't start with numbers, keep it
+            warnings.warn(f"Case ID {case_id} doesn't match expected format, skipping filter")
+            filtered.append(case_id)
+    
+    return filtered
+
+
 class CaseDataset(Dataset):
     """
     Dataset for full-case validation/inference
     Returns full volume (or ROI), label, case_id, and spacing
     """
-    def __init__(self, data_dir, split_file):
+    def __init__(self, data_dir, split_file, domain_config=None):
+        """
+        Args:
+            data_dir: Path to processed data directory
+            split_file: Path to split list file
+            domain_config: Optional domain filtering configuration
+        """
         self.data_dir = Path(data_dir)
 
         with open(split_file, "r") as f:
-            self.case_ids = [line.strip() for line in f if line.strip()]
+            all_case_ids = [line.strip() for line in f if line.strip()]
+        
+        # Filter by domain if specified
+        self.case_ids = filter_cases_by_domain(all_case_ids, domain_config)
 
         self.cases = []
         for case_id in self.case_ids:
@@ -75,7 +132,7 @@ class PatchDataset(Dataset):
     Dataset for 3D patch extraction with class-balanced sampling
     """
     def __init__(self, data_dir, split_file, patch_size=(48, 48, 48),
-                 lesion_patch_ratio=0.5, augmentation=None, seed=42):
+                 lesion_patch_ratio=0.5, augmentation=None, seed=42, domain_config=None):
         """
         Args:
             data_dir: Path to processed data directory
@@ -84,6 +141,7 @@ class PatchDataset(Dataset):
             lesion_patch_ratio: Minimum ratio of lesion-containing patches per batch
             augmentation: Augmentation configuration dictionary
             seed: Random seed
+            domain_config: Optional domain filtering configuration
         """
         self.data_dir = Path(data_dir)
         self.patch_size = patch_size
@@ -97,7 +155,10 @@ class PatchDataset(Dataset):
         
         # Load case list
         with open(split_file, "r") as f:
-            self.case_ids = [line.strip() for line in f if line.strip()]
+            all_case_ids = [line.strip() for line in f if line.strip()]
+        
+        # Filter by domain if specified
+        self.case_ids = filter_cases_by_domain(all_case_ids, domain_config)
         
         # Load case data
         self.cases = []
@@ -305,6 +366,112 @@ class PatchDataset(Dataset):
         return img_patch, label_patch
 
 
+class MixedPatchDataset(Dataset):
+    """
+    Mixed dataset that samples from both FL and DLBCL datasets with controlled ratio.
+    Implements ratio-based sampling for mixed domain training.
+    """
+    def __init__(self, data_dir, split_file, patch_size=(48, 48, 48),
+                 lesion_patch_ratio=0.5, augmentation=None, seed=42,
+                 domain_config=None, fl_ratio=0.5):
+        """
+        Args:
+            data_dir: Path to processed data directory
+            split_file: Path to split list file
+            patch_size: Size of patches to extract
+            lesion_patch_ratio: Ratio of lesion-containing patches
+            augmentation: Augmentation configuration
+            seed: Random seed
+            domain_config: Domain configuration with FL and DLBCL ranges
+            fl_ratio: Ratio of FL samples in each epoch (0.0-1.0)
+        """
+        self.seed = seed
+        self.fl_ratio = fl_ratio
+        
+        # Create FL dataset
+        fl_config = {
+            'domain': 'fl',
+            'fl_prefix_max': domain_config.get('fl_prefix_max', 122) if domain_config else 122,
+            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000) if domain_config else 1000,
+            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422) if domain_config else 1422
+        }
+        
+        self.fl_dataset = PatchDataset(
+            data_dir=data_dir,
+            split_file=split_file,
+            patch_size=patch_size,
+            lesion_patch_ratio=lesion_patch_ratio,
+            augmentation=augmentation,
+            seed=seed,
+            domain_config=fl_config
+        )
+        
+        # Create DLBCL dataset
+        dlbcl_config = {
+            'domain': 'dlbcl',
+            'fl_prefix_max': domain_config.get('fl_prefix_max', 122) if domain_config else 122,
+            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000) if domain_config else 1000,
+            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422) if domain_config else 1422
+        }
+        
+        self.dlbcl_dataset = PatchDataset(
+            data_dir=data_dir,
+            split_file=split_file,
+            patch_size=patch_size,
+            lesion_patch_ratio=lesion_patch_ratio,
+            augmentation=augmentation,
+            seed=seed + 1,  # Different seed for DLBCL
+            domain_config=dlbcl_config
+        )
+        
+        # Track sample counts for logging
+        self.fl_sample_count = 0
+        self.dlbcl_sample_count = 0
+        
+        print(f"MixedPatchDataset: FL cases={len(self.fl_dataset.cases)}, "
+              f"DLBCL cases={len(self.dlbcl_dataset.cases)}, "
+              f"FL ratio={fl_ratio:.2f}")
+    
+    def __len__(self):
+        """Return combined dataset length"""
+        # Use the larger dataset as base length to ensure both are sampled
+        return len(self.fl_dataset) + len(self.dlbcl_dataset)
+    
+    def __getitem__(self, idx):
+        """Sample from FL or DLBCL based on ratio"""
+        # Use random sampling to achieve desired ratio
+        if np.random.rand() < self.fl_ratio and len(self.fl_dataset) > 0:
+            # Sample from FL
+            fl_idx = np.random.randint(len(self.fl_dataset))
+            self.fl_sample_count += 1
+            return self.fl_dataset[fl_idx]
+        elif len(self.dlbcl_dataset) > 0:
+            # Sample from DLBCL
+            dlbcl_idx = np.random.randint(len(self.dlbcl_dataset))
+            self.dlbcl_sample_count += 1
+            return self.dlbcl_dataset[dlbcl_idx]
+        elif len(self.fl_dataset) > 0:
+            # Fallback to FL if DLBCL empty
+            fl_idx = np.random.randint(len(self.fl_dataset))
+            self.fl_sample_count += 1
+            return self.fl_dataset[fl_idx]
+        else:
+            raise ValueError("Both FL and DLBCL datasets are empty")
+    
+    def reset_sample_counts(self):
+        """Reset sample counts for new epoch"""
+        self.fl_sample_count = 0
+        self.dlbcl_sample_count = 0
+    
+    def get_sample_counts(self):
+        """Get current sample counts"""
+        return {
+            'fl_samples': self.fl_sample_count,
+            'dlbcl_samples': self.dlbcl_sample_count,
+            'total_samples': self.fl_sample_count + self.dlbcl_sample_count
+        }
+
+
 def get_data_loader(data_dir, split_file, config, is_train=True):
     """
     Create data loader from configuration
@@ -316,26 +483,69 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         is_train: Whether this is for training (enables augmentation)
     
     Returns:
-        data_loader: PyTorch DataLoader
+        data_loader: PyTorch DataLoader (or tuple of (loader, dataset) for mixed training)
     """
     augmentation = config["augmentation"] if is_train else None
     
     if is_train:
-        dataset = PatchDataset(
-            data_dir=data_dir,
-            split_file=split_file,
-            patch_size=config["data"]["patch_size"],
-            lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
-            augmentation=augmentation,
-            seed=config["experiment"]["seed"]
-        )
+        # Check if mixed domain training is enabled
+        mixed_config = config.get("training", {}).get("mixed_domains", {})
+        use_mixed = mixed_config.get("enabled", False)
+        
+        if use_mixed:
+            # Use MixedPatchDataset for mixed FL + DLBCL training
+            domain_config = config.get("data", {}).get("domains", {})
+            fl_ratio = mixed_config.get("fl_ratio", 0.5)
+            
+            dataset = MixedPatchDataset(
+                data_dir=data_dir,
+                split_file=split_file,
+                patch_size=config["data"]["patch_size"],
+                lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
+                augmentation=augmentation,
+                seed=config["experiment"]["seed"],
+                domain_config=domain_config,
+                fl_ratio=fl_ratio
+            )
+        else:
+            # Use standard PatchDataset
+            dataset = PatchDataset(
+                data_dir=data_dir,
+                split_file=split_file,
+                patch_size=config["data"]["patch_size"],
+                lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
+                augmentation=augmentation,
+                seed=config["experiment"]["seed"]
+            )
+        
         batch_size = config["training"]["batch_size"]
         shuffle = True
     else:
-        dataset = CaseDataset(
-            data_dir=data_dir,
-            split_file=split_file
-        )
+        # Validation: Always use FL-only when mixed training is enabled
+        mixed_config = config.get("training", {}).get("mixed_domains", {})
+        use_mixed = mixed_config.get("enabled", False)
+        
+        if use_mixed:
+            # Filter validation to FL-only
+            domain_config = config.get("data", {}).get("domains", {})
+            fl_config = {
+                'domain': 'fl',
+                'fl_prefix_max': domain_config.get('fl_prefix_max', 122),
+                'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000),
+                'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422)
+            }
+            dataset = CaseDataset(
+                data_dir=data_dir,
+                split_file=split_file,
+                domain_config=fl_config
+            )
+        else:
+            # Standard validation (no filtering)
+            dataset = CaseDataset(
+                data_dir=data_dir,
+                split_file=split_file
+            )
+        
         batch_size = 1
         shuffle = False
     
@@ -346,6 +556,10 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         num_workers=16,
         pin_memory=True
     )
+    
+    # Return both loader and dataset for mixed training (to access sample counts)
+    if is_train and isinstance(dataset, MixedPatchDataset):
+        return data_loader, dataset
     
     return data_loader
 
