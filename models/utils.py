@@ -59,17 +59,25 @@ def sliding_window_inference_3d(
     count_map = np.zeros((d, h, w), dtype=np.float32)
     
     # Generate all sliding window positions
-    z_positions = list(range(0, d - pd + 1, stride_d))
-    y_positions = list(range(0, h - ph + 1, stride_h))
-    x_positions = list(range(0, w - pw + 1, stride_w))
+    z_positions = list(range(0, max(1, d - pd + 1), stride_d))
+    y_positions = list(range(0, max(1, h - ph + 1), stride_h))
+    x_positions = list(range(0, max(1, w - pw + 1), stride_w))
     
     # Ensure we cover the entire volume
-    if len(z_positions) == 0 or z_positions[-1] + pd < d:
+    if d > pd and (len(z_positions) == 0 or z_positions[-1] + pd < d):
         z_positions.append(d - pd)
-    if len(y_positions) == 0 or y_positions[-1] + ph < h:
+    if h > ph and (len(y_positions) == 0 or y_positions[-1] + ph < h):
         y_positions.append(h - ph)
-    if len(x_positions) == 0 or x_positions[-1] + pw < w:
+    if w > pw and (len(x_positions) == 0 or x_positions[-1] + pw < w):
         x_positions.append(w - pw)
+    
+    # Handle case where volume is smaller than patch size
+    if len(z_positions) == 0:
+        z_positions = [0]
+    if len(y_positions) == 0:
+        y_positions = [0]
+    if len(x_positions) == 0:
+        x_positions = [0]
     
     # Sliding window inference
     model.eval()
@@ -77,15 +85,21 @@ def sliding_window_inference_3d(
         for z in z_positions:
             for y in y_positions:
                 for x in x_positions:
-                    # Extract patch
+                    # Calculate actual region to extract
                     z_end = min(z + pd, d)
                     y_end = min(y + ph, h)
                     x_end = min(x + pw, w)
                     
+                    actual_d = z_end - z
+                    actual_h = y_end - y
+                    actual_w = x_end - x
+                    
+                    # Extract patch
                     patch = image[z:z_end, y:y_end, x:x_end]
                     
-                    # Pad if necessary (edge cases)
-                    if patch.shape != patch_size:
+                    # Pad if necessary (when volume is smaller than patch)
+                    needs_padding = patch.shape != patch_size
+                    if needs_padding:
                         pad_d = pd - patch.shape[0]
                         pad_h = ph - patch.shape[1]
                         pad_w = pw - patch.shape[2]
@@ -103,13 +117,11 @@ def sliding_window_inference_3d(
                     pred = model(patch_tensor)
                     pred = pred.cpu().numpy()[0, 0]
                     
-                    # Remove padding if added
-                    actual_d = z_end - z
-                    actual_h = y_end - y
-                    actual_w = x_end - x
-                    pred = pred[:actual_d, :actual_h, :actual_w]
+                    # Remove padding if it was added
+                    if needs_padding:
+                        pred = pred[:actual_d, :actual_h, :actual_w]
                     
-                    # Get importance weights for this patch
+                    # Get importance weights for the actual region size
                     weights = importance_map[:actual_d, :actual_h, :actual_w]
                     
                     # Accumulate weighted predictions
