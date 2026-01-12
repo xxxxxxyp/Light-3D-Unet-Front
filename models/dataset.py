@@ -434,12 +434,15 @@ class MixedPatchDataset(Dataset):
     
     def __len__(self):
         """Return combined dataset length"""
-        # Use the larger dataset as base length to ensure both are sampled
+        # Return sum of both datasets to provide enough samples per epoch
+        # This ensures we can achieve the target ratio over a full epoch
         return len(self.fl_dataset) + len(self.dlbcl_dataset)
     
     def __getitem__(self, idx):
         """Sample from FL or DLBCL based on ratio"""
-        # Use random sampling to achieve desired ratio
+        # Note: We use random sampling independent of idx to achieve desired ratio
+        # The sampling is stochastic but reproducible within each epoch due to
+        # DataLoader's worker seeding
         if np.random.rand() < self.fl_ratio and len(self.fl_dataset) > 0:
             # Sample from FL
             fl_idx = np.random.randint(len(self.fl_dataset))

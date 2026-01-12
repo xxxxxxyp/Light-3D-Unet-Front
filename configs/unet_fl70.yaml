@@ -184,7 +184,7 @@ training:
   mixed_domains:
     enabled: false  # Set to true to enable mixed FL + DLBCL training
     fl_ratio: 0.5   # Ratio of FL samples in training (0.0-1.0)
-    dlbcl_ratio: 0.5  # Ratio of DLBCL samples in training (should sum to 1.0)
+    dlbcl_ratio: 0.5  # Informational only (DLBCL samples = 1.0 - fl_ratio)
   optimizer: AdamW
   scheduler:
     T_max: 200
