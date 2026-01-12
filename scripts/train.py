@@ -230,46 +230,56 @@ class Trainer:
         patch_size = tuple(self.config["data"]["patch_size"])
         
         # Validation uses CaseDataset which returns full volumes
-        pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
-        for batch in pbar:
-            # CaseDataset returns: (image, label, case_id, spacing)
-            if isinstance(batch, (list, tuple)) and len(batch) >= 4:
-                images, labels, case_ids, spacings = batch[0], batch[1], batch[2], batch[3]
-            else:
-                # Fallback for unexpected format
-                images, labels = batch[0], batch[1]
-                spacings = None
-            
-            # Process each case (batch_size=1 for CaseDataset)
-            batch_size = images.shape[0]
-            for b in range(batch_size):
-                # Get single case data
-                image = images[b, 0].cpu().numpy()  # Remove channel dim: [D, H, W]
-                label = labels[b, 0].cpu().numpy()  # Remove channel dim: [D, H, W]
-                
-                # Perform sliding window inference
-                prob_map = sliding_window_inference_3d(
-                    image=image,
-                    model=self.model,
-                    patch_size=patch_size,
-                    overlap=0.5,
-                    device=self.device,
-                    use_gaussian=True
-                )
-                
-                # Store predictions and labels
-                all_predictions.append(prob_map)
-                all_labels.append(label)
-                
-                # Resolve spacing for this case
-                if spacings is not None:
-                    spacing_value = self._resolve_spacing_value(spacings, b, target_spacing)
+        # No gradients needed during validation
+        with torch.no_grad():
+            pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
+            for batch in pbar:
+                # CaseDataset returns: (image, label, case_id, spacing)
+                if isinstance(batch, (list, tuple)) and len(batch) >= 4:
+                    images, labels, case_ids, spacings = batch[0], batch[1], batch[2], batch[3]
                 else:
-                    spacing_value = target_spacing
-                all_spacings.append(spacing_value)
+                    # Fallback for unexpected format
+                    images, labels = batch[0], batch[1]
+                    spacings = None
                 
-                # Update progress bar
-                pbar.set_postfix({"cases": f"{len(all_predictions)}"})
+                # Process each case (batch_size=1 for CaseDataset)
+                batch_size = images.shape[0]
+                for b in range(batch_size):
+                    # Get single case data - safely handle different tensor shapes
+                    # CaseDataset returns [B, C, D, H, W] where C=1
+                    if images.ndim == 5:
+                        image = images[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                        label = labels[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                    elif images.ndim == 4:
+                        # In case batch dimension is already removed
+                        image = images[0].cpu().numpy() if b == 0 else images[b].cpu().numpy()
+                        label = labels[0].cpu().numpy() if b == 0 else labels[b].cpu().numpy()
+                    else:
+                        raise ValueError(f"Unexpected image shape: {images.shape}")
+                    
+                    # Perform sliding window inference
+                    prob_map = sliding_window_inference_3d(
+                        image=image,
+                        model=self.model,
+                        patch_size=patch_size,
+                        overlap=0.5,
+                        device=self.device,
+                        use_gaussian=True
+                    )
+                    
+                    # Store predictions and labels
+                    all_predictions.append(prob_map)
+                    all_labels.append(label)
+                    
+                    # Resolve spacing for this case
+                    if spacings is not None:
+                        spacing_value = self._resolve_spacing_value(spacings, b, target_spacing)
+                    else:
+                        spacing_value = target_spacing
+                    all_spacings.append(spacing_value)
+                    
+                    # Update progress bar
+                    pbar.set_postfix({"cases": f"{len(all_predictions)}"})
         
         if len(all_predictions) == 0:
             warnings.warn(

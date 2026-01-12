@@ -59,11 +59,12 @@ def sliding_window_inference_3d(
     count_map = np.zeros((d, h, w), dtype=np.float32)
     
     # Generate all sliding window positions
-    z_positions = list(range(0, max(1, d - pd + 1), stride_d))
-    y_positions = list(range(0, max(1, h - ph + 1), stride_h))
-    x_positions = list(range(0, max(1, w - pw + 1), stride_w))
+    # Use max(0, ...) to handle volumes smaller than patch size
+    z_positions = list(range(0, max(0, d - pd + 1), stride_d)) if d >= pd else []
+    y_positions = list(range(0, max(0, h - ph + 1), stride_h)) if h >= ph else []
+    x_positions = list(range(0, max(0, w - pw + 1), stride_w)) if w >= pw else []
     
-    # Ensure we cover the entire volume
+    # Ensure we cover the entire volume for dimensions larger than patch
     if d > pd and (len(z_positions) == 0 or z_positions[-1] + pd < d):
         z_positions.append(d - pd)
     if h > ph and (len(y_positions) == 0 or y_positions[-1] + ph < h):
@@ -115,7 +116,11 @@ def sliding_window_inference_3d(
                     
                     # Predict
                     pred = model(patch_tensor)
-                    pred = pred.cpu().numpy()[0, 0]
+                    # Safely extract prediction - handle different output shapes
+                    pred = pred.squeeze().cpu().numpy()
+                    # Ensure we have 3D output
+                    if pred.ndim != 3:
+                        raise ValueError(f"Expected 3D model output, got shape {pred.shape}")
                     
                     # Remove padding if it was added
                     if needs_padding:
