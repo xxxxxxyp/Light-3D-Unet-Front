@@ -53,6 +53,30 @@ def test_domain_filtering():
     
     print("\n✓ All domain filtering tests passed!")
 
+def test_patchdataset_defaults_to_fl():
+    """PatchDataset should default to FL-only cases when no domain is provided"""
+    print("\nTesting PatchDataset default domain filtering...")
+    import tempfile
+    from models.dataset import PatchDataset
+    
+    with tempfile.TemporaryDirectory() as tmpdir:
+        split_file = os.path.join(tmpdir, "split.txt")
+        with open(split_file, "w") as f:
+            f.write("0001\n0122\n1000\n1100\n")
+        
+        dataset = PatchDataset(
+            data_dir=tmpdir,
+            split_file=split_file,
+            patch_size=(4, 4, 4),
+            lesion_patch_ratio=0.5,
+            augmentation=None,
+            seed=0
+        )
+        
+        print(f"Filtered case IDs: {dataset.case_ids}")
+        assert set(dataset.case_ids) == {"0001", "0122"}, "PatchDataset should only keep FL cases by default"
+        print("✓ PatchDataset default filtering works correctly")
+
 def test_mixed_dataset_import():
     """Test that MixedPatchDataset can be imported"""
     print("\nTesting MixedPatchDataset import...")
@@ -95,6 +119,7 @@ def test_config_schema():
 if __name__ == "__main__":
     try:
         test_domain_filtering()
+        test_patchdataset_defaults_to_fl()
         test_mixed_dataset_import()
         test_config_schema()
         print("\n" + "="*50)

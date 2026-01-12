@@ -17,6 +17,17 @@ from scipy.ndimage import rotate, zoom
 
 from .utils import find_case_files
 
+DEFAULT_FL_PREFIX_MAX = 122
+DEFAULT_DLBCL_PREFIX_MIN = 1000
+DEFAULT_DLBCL_PREFIX_MAX = 1422
+
+DEFAULT_FL_DOMAIN_CONFIG = {
+    'domain': 'fl',
+    'fl_prefix_max': DEFAULT_FL_PREFIX_MAX,
+    'dlbcl_prefix_min': DEFAULT_DLBCL_PREFIX_MIN,
+    'dlbcl_prefix_max': DEFAULT_DLBCL_PREFIX_MAX
+}
+
 
 def filter_cases_by_domain(case_ids, domain_config):
     """
@@ -37,9 +48,9 @@ def filter_cases_by_domain(case_ids, domain_config):
         return case_ids
     
     domain = domain_config.get('domain', '').lower()
-    fl_prefix_max = domain_config.get('fl_prefix_max', 122)
-    dlbcl_prefix_min = domain_config.get('dlbcl_prefix_min', 1000)
-    dlbcl_prefix_max = domain_config.get('dlbcl_prefix_max', 1422)
+    fl_prefix_max = domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX)
+    dlbcl_prefix_min = domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN)
+    dlbcl_prefix_max = domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX)
     
     filtered = []
     for case_id in case_ids:
@@ -152,6 +163,10 @@ class PatchDataset(Dataset):
         # Set random seed
         random.seed(seed)
         np.random.seed(seed)
+        
+        # Default to FL-only training data when no domain is specified
+        if domain_config is None:
+            domain_config = DEFAULT_FL_DOMAIN_CONFIG.copy()
         
         # Load case list
         with open(split_file, "r") as f:
@@ -391,9 +406,9 @@ class MixedPatchDataset(Dataset):
         # Create FL dataset
         fl_config = {
             'domain': 'fl',
-            'fl_prefix_max': domain_config.get('fl_prefix_max', 122) if domain_config else 122,
-            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000) if domain_config else 1000,
-            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422) if domain_config else 1422
+            'fl_prefix_max': domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX) if domain_config else DEFAULT_FL_PREFIX_MAX,
+            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN) if domain_config else DEFAULT_DLBCL_PREFIX_MIN,
+            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX) if domain_config else DEFAULT_DLBCL_PREFIX_MAX
         }
         
         self.fl_dataset = PatchDataset(
@@ -409,9 +424,9 @@ class MixedPatchDataset(Dataset):
         # Create DLBCL dataset
         dlbcl_config = {
             'domain': 'dlbcl',
-            'fl_prefix_max': domain_config.get('fl_prefix_max', 122) if domain_config else 122,
-            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000) if domain_config else 1000,
-            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422) if domain_config else 1422
+            'fl_prefix_max': domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX) if domain_config else DEFAULT_FL_PREFIX_MAX,
+            'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN) if domain_config else DEFAULT_DLBCL_PREFIX_MIN,
+            'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX) if domain_config else DEFAULT_DLBCL_PREFIX_MAX
         }
         
         self.dlbcl_dataset = PatchDataset(
@@ -533,9 +548,9 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
             domain_config = config.get("data", {}).get("domains", {})
             fl_config = {
                 'domain': 'fl',
-                'fl_prefix_max': domain_config.get('fl_prefix_max', 122),
-                'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', 1000),
-                'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', 1422)
+                'fl_prefix_max': domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX),
+                'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN),
+                'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX)
             }
             dataset = CaseDataset(
                 data_dir=data_dir,
