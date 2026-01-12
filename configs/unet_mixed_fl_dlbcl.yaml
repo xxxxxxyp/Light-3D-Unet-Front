@@ -1,8 +1,8 @@
 audit:
   allowed_datasets:
   - FL
-  forbidden_datasets:
-  - DLBCL
+  - DLBCL  # Added for mixed training
+  forbidden_datasets: []
   git_commit_hash: null
   save_config_version: true
   save_environment_info: true
@@ -87,15 +87,14 @@ data:
     test: 0.15
     train: 0.7
     val: 0.15
-  total_cases: 123
+  total_cases: 546  # 123 FL + 423 DLBCL (example)
   volume_threshold:
     inference_cc: 0.5
     train_cc: 0.1
 data_dir: data/processed
 experiment:
-  description: Lightweight 3D-UNet for PET-only lesion candidate recall using FL-70%
-    data
-  name: FL70_Lightweight_3DUNet
+  description: Lightweight 3D-UNet with mixed FL + DLBCL training (50/50 ratio), FL-only validation
+  name: Mixed_FL_DLBCL_Lightweight_3DUNet
   processing_path: B
   seed: 42
 loss:
@@ -182,9 +181,9 @@ training:
   # When enabled, training uses both FL and DLBCL data with controlled ratio
   # Validation always remains FL-only for consistent evaluation
   mixed_domains:
-    enabled: false  # Set to true to enable mixed FL + DLBCL training
-    fl_ratio: 0.5   # Ratio of FL samples in training (0.0-1.0)
-    dlbcl_ratio: 0.5  # Informational only (DLBCL samples = 1.0 - fl_ratio)
+    enabled: true  # Mixed FL + DLBCL training enabled
+    fl_ratio: 0.5   # 50% FL samples in training
+    dlbcl_ratio: 0.5  # 50% DLBCL samples (informational only)
   optimizer: AdamW
   scheduler:
     T_max: 200

@@ -100,12 +100,21 @@ class Trainer:
         data_dir = self.config.get("data_dir", "data/processed")
         splits_dir = self.config.get("splits_dir", "data/splits")
         
-        self.train_loader = get_data_loader(
+        train_result = get_data_loader(
             data_dir=data_dir,
             split_file=f"{splits_dir}/train_list.txt",
             config=self.config,
             is_train=True
         )
+        
+        # Handle mixed dataset case
+        if isinstance(train_result, tuple):
+            self.train_loader, self.train_dataset = train_result
+            self.use_mixed_training = True
+        else:
+            self.train_loader = train_result
+            self.train_dataset = None
+            self.use_mixed_training = False
         
         self.val_loader = get_data_loader(
             data_dir=data_dir,
@@ -113,6 +122,14 @@ class Trainer:
             config=self.config,
             is_train=False
         )
+        
+        # Log mixed training status
+        if self.use_mixed_training:
+            mixed_config = self.config.get("training", {}).get("mixed_domains", {})
+            print(f"\n*** Mixed Domain Training Enabled ***")
+            print(f"  FL ratio: {mixed_config.get('fl_ratio', 0.5):.2%}")
+            print(f"  Validation: FL-only")
+            print(f"  Val cases: {len(self.val_loader.dataset)} FL cases")
         
         # Setup logging
         log_dir = Path(self.config["output"]["log_dir"])
@@ -177,6 +194,10 @@ class Trainer:
         """Train for one epoch"""
         self.model.train()
         
+        # Reset sample counts for mixed training
+        if self.use_mixed_training and self.train_dataset is not None:
+            self.train_dataset.reset_sample_counts()
+        
         total_loss = 0.0
         num_batches = 0
         
@@ -207,6 +228,29 @@ class Trainer:
             self.writer.add_scalar("Loss/train_step", loss.item(), global_step)
         
         avg_loss = total_loss / num_batches
+        
+        # Log domain statistics for mixed training
+        if self.use_mixed_training and self.train_dataset is not None:
+            counts = self.train_dataset.get_sample_counts()
+            fl_samples = counts['fl_samples']
+            dlbcl_samples = counts['dlbcl_samples']
+            total_samples = counts['total_samples']
+            
+            if total_samples > 0:
+                fl_ratio = fl_samples / total_samples
+                dlbcl_ratio = dlbcl_samples / total_samples
+                
+                print(f"\n  Domain Statistics:")
+                print(f"    FL samples: {fl_samples} ({fl_ratio:.2%})")
+                print(f"    DLBCL samples: {dlbcl_samples} ({dlbcl_ratio:.2%})")
+                print(f"    Total samples: {total_samples}")
+                
+                # Log to tensorboard
+                self.writer.add_scalar("Domain/fl_samples", fl_samples, epoch)
+                self.writer.add_scalar("Domain/dlbcl_samples", dlbcl_samples, epoch)
+                self.writer.add_scalar("Domain/fl_ratio", fl_ratio, epoch)
+                self.writer.add_scalar("Domain/dlbcl_ratio", dlbcl_ratio, epoch)
+        
         return avg_loss
     
     def validate(self, epoch):
