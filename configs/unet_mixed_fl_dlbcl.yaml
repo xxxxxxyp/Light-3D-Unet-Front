@@ -1,0 +1,208 @@
+audit:
+  allowed_datasets:
+  - FL
+  - DLBCL  # Added for mixed training
+  forbidden_datasets: []
+  git_commit_hash: null
+  save_config_version: true
+  save_environment_info: true
+  save_intermediate_files: true
+  save_processing_scripts_version: true
+  test_set_access: false
+augmentation:
+  gaussian_noise:
+    enabled: true
+    mean: 0.0
+    prob: 0.3
+    sigma: 0.01
+  intensity_shift:
+    enabled: true
+    prob: 0.5
+    shift_range:
+    - -0.1
+    - 0.1
+  random_crop:
+    enabled: true
+    ensure_lesion_coverage: true
+  random_flip:
+    axes:
+    - 0
+    - 1
+    - 2
+    enabled: true
+    prob: 0.5
+  random_rotation:
+    angle_range:
+    - -15
+    - 15
+    axes:
+    - - 0
+      - 1
+    - - 0
+      - 2
+    - - 1
+      - 2
+    enabled: true
+    prob: 0.5
+  random_scale:
+    enabled: true
+    prob: 0.3
+    scale_range:
+    - 0.9
+    - 1.1
+data:
+  bbox_expansion_mm: 10.0
+  bbox_expansion_voxels: 3
+  dataset: Follicular_Lymphoma
+  # Domain configuration for mixed training (FL + DLBCL)
+  # Case ID ranges: FL (0000-0122), DLBCL (1000-1422)
+  domains:
+    fl_prefix_max: 122
+    dlbcl_prefix_min: 1000
+    dlbcl_prefix_max: 1422
+  image_size:
+  - 144
+  - 144
+  - null
+  intensity:
+    clip_percentile_high: 99.5
+    clip_percentile_low: 0.5
+    normalization_range:
+    - 0
+    - 1
+  patch_size:
+  - 48
+  - 48
+  - 48
+  spacing:
+    original:
+    - 4.0
+    - 4.0
+    - 4.0
+    target:
+    - 4.0
+    - 4.0
+    - 4.0
+  split_ratio:
+    test: 0.15
+    train: 0.7
+    val: 0.15
+  total_cases: 546  # 123 FL + 423 DLBCL (example)
+  volume_threshold:
+    inference_cc: 0.5
+    train_cc: 0.1
+data_dir: data/processed
+experiment:
+  description: Lightweight 3D-UNet with mixed FL + DLBCL training (50/50 ratio), FL-only validation
+  name: Mixed_FL_DLBCL_Lightweight_3DUNet
+  processing_path: B
+  seed: 42
+loss:
+  alpha: 0.7
+  beta: 0.3
+  combined_loss_weights:
+    bce: 0.2
+    focal_tversky: 0.8
+  gamma: 0.75
+  name: FocalTverskyLoss
+  use_combined_loss: false
+metrics:
+  model_selection:
+    primary_metric: lesion_wise_recall
+    tie_breaker: voxel_wise_dsc
+    tie_threshold: 0.01
+  primary: lesion_wise_recall
+  secondary:
+  - voxel_wise_dsc
+  - lesion_wise_precision
+  - fp_per_case
+model:
+  activation: LeakyReLU
+  dropout_p: 0.1
+  encoder_channels:
+  - 16
+  - 32
+  - 64
+  - 128
+  groups: 8
+  leaky_relu_slope: 0.01
+  name: Lightweight3DUNet
+  normalization: InstanceNorm3d
+  output_activation: Sigmoid
+  output_channels: 1
+  start_channels: 16
+  use_depthwise_separable: true
+  use_dropout: true
+  use_grouped_conv: true
+  use_residual: true
+output:
+  bboxes_dir: inference/bboxes
+  best_model_criterion: val_recall
+  best_model_path: models/best_model.pth
+  checkpoint_dir: models/checkpoints
+  keep_last_n_checkpoints: 5
+  log_dir: logs
+  metadata_fields:
+  - case_id
+  - orig_spacing
+  - image_size
+  - suv_calculated
+  - clip_values
+  - normalization_range
+  - patch_size
+  - voxel_thresholds
+  - processing_timestamp
+  - processing_path
+  - seed
+  metrics_csv: inference/metrics.csv
+  prob_maps_dir: inference/prob_maps
+  save_checkpoints: true
+  save_every_n_epochs: 10
+  save_metadata: true
+  tensorboard_dir: logs/tensorboard
+splits_dir: data/splits
+target_performance:
+  description: If not achieved, analyze reasons and provide improvement suggestions
+  lesion_wise_recall: 0.8
+training:
+  batch_size: 2
+  class_balanced_sampling:
+    enabled: true
+    lesion_patch_ratio: 0.5
+    min_lesion_patches_per_batch: 1
+  early_stopping:
+    enabled: true
+    metric: recall
+    mode: max
+    patience: 20
+  epochs: 200
+  learning_rate: 0.0001
+  # Mixed domain training configuration
+  # When enabled, training uses both FL and DLBCL data with controlled ratio
+  # Validation always remains FL-only for consistent evaluation
+  mixed_domains:
+    enabled: true  # Mixed FL + DLBCL training enabled
+    fl_ratio: 0.5   # 50% FL samples in training
+    dlbcl_ratio: 0.5  # 50% DLBCL samples (informational only)
+  optimizer: AdamW
+  scheduler:
+    T_max: 200
+    eta_min: 1.0e-06
+    name: CosineAnnealingLR
+  use_warmup: true
+  warmup_epochs: 5
+  weight_decay: 1.0e-05
+validation:
+  default_threshold: 0.3
+  lesion_matching:
+    center_distance_threshold_mm: 10.0
+    iou_threshold: 0.1
+  threshold_sensitivity_range:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.4
+  - 0.5
+  - 0.6
+  - 0.7
+  validate_every_n_epochs: 1
