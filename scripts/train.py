@@ -320,6 +320,7 @@ class Trainer:
         dlbcl_steps_done = 0
         
         # Base global step for this epoch
+        # Note: dlbcl_steps is fixed at epoch start for consistent global_step calculation
         base_global_step = epoch * (fl_batches + dlbcl_steps)
         
         # Stage 1: Full pass through FL data
@@ -347,6 +348,7 @@ class Trainer:
             pbar.set_postfix({"loss": f"{loss.item():.4f}"})
             
             # Log to tensorboard with monotonic global step
+            # Both train_step (unified) and fl_step (domain-specific) for flexible monitoring
             global_step = base_global_step + batch_idx
             self.writer.add_scalar("Loss/train_step", loss.item(), global_step)
             self.writer.add_scalar("Loss/fl_step", loss.item(), global_step)
@@ -388,6 +390,7 @@ class Trainer:
                 pbar.set_postfix({"loss": f"{loss.item():.4f}"})
                 
                 # Log to tensorboard with monotonic global step
+                # Both train_step (unified) and dlbcl_step (domain-specific) for flexible monitoring
                 global_step = base_global_step + fl_steps + step_idx
                 self.writer.add_scalar("Loss/train_step", loss.item(), global_step)
                 self.writer.add_scalar("Loss/dlbcl_step", loss.item(), global_step)
@@ -423,8 +426,6 @@ class Trainer:
         self.writer.add_scalar("Loss/combined", combined_loss, epoch)
         
         return combined_loss
-        
-        return avg_loss
     
     def validate(self, epoch):
         """

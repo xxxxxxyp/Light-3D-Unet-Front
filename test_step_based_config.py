@@ -38,7 +38,7 @@ def test_configs():
     with open('configs/unet_mixed_fl_dlbcl.yaml', 'r') as f:
         mixed_config = yaml.safe_load(f)
     
-    assert mixed_config['training']['mixed_domains']['enabled'] == True
+    assert mixed_config['training']['mixed_domains']['enabled'] is True
     assert mixed_config['training']['mixed_domains']['mode'] == 'fl_epoch_plus_dlbcl'
     assert 'dlbcl_steps_ratio' in mixed_config['training']['mixed_domains']
     print("  ✓ Mixed config has step-based mode enabled")
