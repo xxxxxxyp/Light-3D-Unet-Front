@@ -32,6 +32,7 @@ Light-3D-Unet-Front/
 │   ├── processed/              # Preprocessed data with metadata
 │   │   ├── images/             # Preprocessed PET images
 │   │   ├── labels/             # Preprocessed lesion masks
+│   │   ├── body_masks/         # Body masks (exclude air/background)
 │   │   └── metadata/           # Per-case metadata JSON files
 │   └── splits/                 # Train/val/test split files
 ├── models/
@@ -145,6 +146,20 @@ This applies:
 - Preserves original 4×4×4mm spacing (no resampling)
 - Generates metadata JSON files in `data/processed/metadata/{case_id}.json`
 - Outputs files in flat structure matching raw data (images/ and labels/ subdirectories)
+
+**Body Mask Generation** (enabled by default):
+
+The preprocessing automatically generates body masks to exclude air/background regions outside the patient body:
+- Body masks are saved in `data/processed/body_masks/{case_id}.nii.gz`
+- Generated using morphological operations on normalized PET images:
+  1. Thresholding (default: 0.02 on 0-1 normalized scale)
+  2. Binary closing to fill holes
+  3. Keep largest connected component to remove table/noise
+  4. Dilation by 3-5 voxels to ensure full body coverage
+- Masks are used during training to constrain background patch sampling
+- Applied to validation/inference probability maps to reduce false positives in air
+
+To disable body mask generation, set `data.body_mask.enabled: false` in your config file.
 
 ## Training
 

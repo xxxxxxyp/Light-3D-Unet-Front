@@ -85,10 +85,21 @@ data/
 │   ├── 0001.nii.gz       # FL label
 │   ├── 1000.nii.gz       # DLBCL label
 │   └── ...
+├── body_masks/           # Body masks (shared for FL and DLBCL)
+│   ├── 0000.nii.gz       # FL body mask
+│   ├── 0001.nii.gz       # FL body mask
+│   ├── 1000.nii.gz       # DLBCL body mask
+│   └── ...
 └── splits/
     ├── train_list.txt    # Contains both FL and DLBCL case IDs
     └── val_list.txt      # Can contain both, but will be filtered to FL-only
 ```
+
+**Note on Body Masks:**
+- Body masks are generated during preprocessing and are shared between FL and DLBCL cases
+- They constrain background patch sampling to the patient body region
+- This prevents sampling air-only patches and reduces false positives
+- See main README for body mask configuration options
 
 ## Training
 
