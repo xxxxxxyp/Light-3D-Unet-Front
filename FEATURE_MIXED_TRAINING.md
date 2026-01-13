@@ -2,7 +2,7 @@
 
 ## Quick Start
 
-To enable mixed domain training on FL + DLBCL data:
+To enable mixed domain training on FL + DLBCL data with the new step-based mode:
 
 1. Use the provided example config:
    ```bash
@@ -14,32 +14,47 @@ To enable mixed domain training on FL + DLBCL data:
    training:
      mixed_domains:
        enabled: true
-       fl_ratio: 0.5  # 50% FL, 50% DLBCL
+       mode: fl_epoch_plus_dlbcl  # Step-based (recommended)
+       dlbcl_steps_ratio: 1.0     # DLBCL steps = FL batches × ratio
    ```
 
 ## What It Does
 
-- **Trains** on a mix of FL and DLBCL cases with controlled sampling ratio
-- **Validates** exclusively on FL cases for consistent evaluation
-- **Logs** domain statistics to console and TensorBoard each epoch
-- **Maintains** backward compatibility (disabled by default)
+**New Step-Based Mode (`fl_epoch_plus_dlbcl`):**
+- **Trains** on FL with full epoch pass, then adds DLBCL steps by ratio
+- **Guarantees** FL data is fully traversed each epoch
+- **Provides** precise control over FL/DLBCL balance
+- **Tracks** separate losses for FL and DLBCL stages
 
-## Expected Output
+**Legacy Probabilistic Mode:**
+- Stochastic sampling per batch (backward compatibility)
+- See [MIXED_TRAINING_GUIDE.md](MIXED_TRAINING_GUIDE.md) for details
+
+**Both modes:**
+- **Validate** exclusively on FL cases for consistent evaluation
+- **Log** domain statistics to console and TensorBoard each epoch
+- **Maintain** backward compatibility
+
+## Expected Output (Step-Based Mode)
 
 ```
-*** Mixed Domain Training Enabled ***
-  FL ratio: 50.00%
+*** Step-Based Mixed Domain Training Enabled ***
+  Mode: fl_epoch_plus_dlbcl
+  FL batches per epoch: 100
+  DLBCL steps per epoch: 100
+  DLBCL steps ratio: 1.00
+  Total steps per epoch: 200
   Validation: FL-only
   Val cases: 18 FL cases
 
-MixedPatchDataset: FL cases=87, DLBCL cases=423, FL ratio=0.50
-
 Epoch 1/200
+  Stage 1: FL training (100 batches)
+  Stage 2: DLBCL training (100 steps)
+  
   Domain Statistics:
-    FL samples: 512 (50.00%)
-    DLBCL samples: 512 (50.00%)
-    Total samples: 1024
-  Train Loss: 0.3456
+    FL steps: 100 (50.00%), avg loss: 0.3456
+    DLBCL steps: 100 (50.00%), avg loss: 0.3234
+    Total steps: 200, combined loss: 0.3345
   Val Lesion-wise Recall: 0.7543 (best threshold: 0.30)
   ...
 ```
@@ -50,7 +65,7 @@ Epoch 1/200
 - **Implementation Details**: See [IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)
 - **Example Configs**: 
   - `configs/unet_fl70.yaml` - FL-only (backward compatible)
-  - `configs/unet_mixed_fl_dlbcl.yaml` - Mixed training enabled
+  - `configs/unet_mixed_fl_dlbcl.yaml` - Step-based mixed training
 
 ## Requirements
 
@@ -61,11 +76,13 @@ Epoch 1/200
 
 ## Key Features
 
-✅ **Controlled ratio**: Configure FL/DLBCL sampling ratio  
+✅ **Step-based schedule**: Full FL epoch + configurable DLBCL steps  
+✅ **Guaranteed FL coverage**: FL data fully traversed each epoch  
+✅ **Precise control**: Configure exact FL/DLBCL ratio by steps  
+✅ **Separate tracking**: FL and DLBCL losses logged independently  
 ✅ **FL-only validation**: Always evaluate on FL for consistency  
-✅ **Domain tracking**: Log sample counts per domain each epoch  
 ✅ **TensorBoard metrics**: Visualize domain statistics over time  
-✅ **Backward compatible**: Works with existing configs/data  
+✅ **Backward compatible**: Supports old probabilistic mode  
 ✅ **No dataset changes**: Uses existing file structure  
 
 ## Configuration Options
@@ -79,39 +96,60 @@ data:
     dlbcl_prefix_max: 1422
 ```
 
-### Mixed Training (in `training.mixed_domains`)
+### Step-Based Mixed Training (in `training.mixed_domains`)
 ```yaml
 training:
   mixed_domains:
-    enabled: false           # Set to true to enable
-    fl_ratio: 0.5           # Proportion of FL samples (0.0-1.0)
-    dlbcl_ratio: 0.5        # Informational (= 1.0 - fl_ratio)
+    enabled: true
+    mode: fl_epoch_plus_dlbcl      # Step-based mode
+    dlbcl_steps_ratio: 1.0         # DLBCL steps = FL batches × ratio
+    dlbcl_steps: null              # Optional: exact step count override
 ```
 
-## Example Ratios
+### Probabilistic Mixed Training (backward compatibility)
+```yaml
+training:
+  mixed_domains:
+    enabled: true
+    mode: probabilistic            # Old stochastic mode
+    fl_ratio: 0.5                  # Proportion of FL samples (0.0-1.0)
+```
 
-### 50/50 (Default)
+## Example Ratios (Step-Based Mode)
+
+### Equal FL and DLBCL Steps
 ```yaml
 mixed_domains:
   enabled: true
-  fl_ratio: 0.5
+  mode: fl_epoch_plus_dlbcl
+  dlbcl_steps_ratio: 1.0  # Same steps as FL
 ```
 
-### FL-Heavy (70% FL, 30% DLBCL)
+### FL-Heavy (2:1 ratio)
 ```yaml
 mixed_domains:
   enabled: true
-  fl_ratio: 0.7
+  mode: fl_epoch_plus_dlbcl
+  dlbcl_steps_ratio: 0.5  # Half as many DLBCL steps
 ```
 
-### DLBCL-Heavy (30% FL, 70% DLBCL)
+### DLBCL-Heavy (1:2 ratio)
 ```yaml
 mixed_domains:
   enabled: true
-  fl_ratio: 0.3
+  mode: fl_epoch_plus_dlbcl
+  dlbcl_steps_ratio: 2.0  # Twice as many DLBCL steps
 ```
 
-### FL-Only (Backward Compatible)
+### Exact Step Count
+```yaml
+mixed_domains:
+  enabled: true
+  mode: fl_epoch_plus_dlbcl
+  dlbcl_steps: 150  # Exactly 150 DLBCL steps
+```
+
+### FL-Only
 ```yaml
 mixed_domains:
   enabled: false
@@ -124,7 +162,16 @@ View domain statistics:
 tensorboard --logdir logs/tensorboard
 ```
 
-Available metrics:
+**Step-based mode:**
+- `Domain/fl_steps` - FL steps per epoch
+- `Domain/dlbcl_steps` - DLBCL steps per epoch
+- `Domain/fl_ratio` - FL step ratio
+- `Domain/dlbcl_ratio` - DLBCL step ratio
+- `Loss/fl_avg` - Average FL loss
+- `Loss/dlbcl_avg` - Average DLBCL loss
+- `Loss/combined` - Combined loss
+
+**Probabilistic mode:**
 - `Domain/fl_samples` - FL sample count per epoch
 - `Domain/dlbcl_samples` - DLBCL sample count per epoch
 - `Domain/fl_ratio` - Actual FL sampling ratio
@@ -133,9 +180,10 @@ Available metrics:
 ## Implementation
 
 - **Dataset Filtering**: `filter_cases_by_domain()` in `models/dataset.py`
-- **Mixed Dataset**: `MixedPatchDataset` class with ratio-based sampling
-- **Data Loader**: `get_data_loader()` handles both standard and mixed datasets
-- **Training Loop**: Automatic domain statistics tracking and logging
+- **Step-Based Mode**: Separate FL and DLBCL loaders with two-stage training
+- **Probabilistic Mode**: `MixedPatchDataset` class with stochastic sampling
+- **Data Loader**: `get_data_loader()` handles all modes
+- **Training Loop**: Two-stage epoch for step-based mode
 
 ## Testing
 
@@ -146,7 +194,8 @@ python test_mixed_training.py
 
 Tests include:
 - Domain filtering logic
-- Config schema validation
+- Config schema validation (including new fields)
+- DLBCL steps computation
 - Import verification
 
 ## Security

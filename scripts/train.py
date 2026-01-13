@@ -107,13 +107,34 @@ class Trainer:
             is_train=True
         )
         
-        # Handle mixed dataset case
-        if isinstance(train_result, tuple):
+        # Determine training mode
+        mixed_config = self.config.get("training", {}).get("mixed_domains", {})
+        use_mixed = mixed_config.get("enabled", False)
+        mixed_mode = mixed_config.get("mode", "probabilistic")
+        
+        # Handle different training modes
+        if isinstance(train_result, dict) and 'fl_loader' in train_result:
+            # New step-based mode: separate FL and DLBCL loaders
+            self.fl_loader = train_result['fl_loader']
+            self.dlbcl_loader = train_result['dlbcl_loader']
+            self.train_loader = None
+            self.train_dataset = None
+            self.use_step_based_mixed = True
+            self.use_mixed_training = False
+        elif isinstance(train_result, tuple):
+            # Old probabilistic mode: single loader with MixedPatchDataset
             self.train_loader, self.train_dataset = train_result
+            self.fl_loader = None
+            self.dlbcl_loader = None
+            self.use_step_based_mixed = False
             self.use_mixed_training = True
         else:
+            # Standard mode: single loader
             self.train_loader = train_result
             self.train_dataset = None
+            self.fl_loader = None
+            self.dlbcl_loader = None
+            self.use_step_based_mixed = False
             self.use_mixed_training = False
         
         self.val_loader = get_data_loader(
@@ -124,9 +145,26 @@ class Trainer:
         )
         
         # Log mixed training status
-        if self.use_mixed_training:
-            mixed_config = self.config.get("training", {}).get("mixed_domains", {})
-            print(f"\n*** Mixed Domain Training Enabled ***")
+        if self.use_step_based_mixed:
+            dlbcl_steps_ratio = mixed_config.get("dlbcl_steps_ratio", 0.0)
+            dlbcl_steps_override = mixed_config.get("dlbcl_steps", None)
+            fl_batches = len(self.fl_loader)
+            
+            if dlbcl_steps_override is not None:
+                dlbcl_steps = dlbcl_steps_override
+            else:
+                dlbcl_steps = round(fl_batches * dlbcl_steps_ratio)
+            
+            print(f"\n*** Step-Based Mixed Domain Training Enabled ***")
+            print(f"  Mode: fl_epoch_plus_dlbcl")
+            print(f"  FL batches per epoch: {fl_batches}")
+            print(f"  DLBCL steps per epoch: {dlbcl_steps}")
+            print(f"  DLBCL steps ratio: {dlbcl_steps_ratio:.2f}")
+            print(f"  Total steps per epoch: {fl_batches + dlbcl_steps}")
+            print(f"  Validation: FL-only")
+            print(f"  Val cases: {len(self.val_loader.dataset)} FL cases")
+        elif self.use_mixed_training:
+            print(f"\n*** Mixed Domain Training Enabled (Probabilistic Mode) ***")
             print(f"  FL ratio: {mixed_config.get('fl_ratio', 0.5):.2%}")
             print(f"  Validation: FL-only")
             print(f"  Val cases: {len(self.val_loader.dataset)} FL cases")
@@ -194,7 +232,12 @@ class Trainer:
         """Train for one epoch"""
         self.model.train()
         
-        # Reset sample counts for mixed training
+        # Step-based mixed training: FL full pass + DLBCL steps
+        if self.use_step_based_mixed:
+            return self._train_epoch_step_based(epoch)
+        
+        # Old probabilistic mixed training or standard training
+        # Reset sample counts for old mixed training mode
         if self.use_mixed_training and self.train_dataset is not None:
             self.train_dataset.reset_sample_counts()
         
@@ -229,7 +272,7 @@ class Trainer:
         
         avg_loss = total_loss / num_batches
         
-        # Log domain statistics for mixed training
+        # Log domain statistics for old mixed training
         if self.use_mixed_training and self.train_dataset is not None:
             counts = self.train_dataset.get_sample_counts()
             fl_samples = counts['fl_samples']
@@ -250,6 +293,136 @@ class Trainer:
                 self.writer.add_scalar("Domain/dlbcl_samples", dlbcl_samples, epoch)
                 self.writer.add_scalar("Domain/fl_ratio", fl_ratio, epoch)
                 self.writer.add_scalar("Domain/dlbcl_ratio", dlbcl_ratio, epoch)
+        
+        return avg_loss
+    
+    def _train_epoch_step_based(self, epoch):
+        """
+        Train one epoch with step-based mixed training:
+        1. Full pass through all FL batches
+        2. Additional DLBCL steps based on ratio
+        """
+        mixed_config = self.config.get("training", {}).get("mixed_domains", {})
+        dlbcl_steps_ratio = mixed_config.get("dlbcl_steps_ratio", 0.0)
+        dlbcl_steps_override = mixed_config.get("dlbcl_steps", None)
+        
+        # Calculate DLBCL steps
+        fl_batches = len(self.fl_loader)
+        if dlbcl_steps_override is not None:
+            dlbcl_steps = dlbcl_steps_override
+        else:
+            dlbcl_steps = round(fl_batches * dlbcl_steps_ratio)
+        
+        # Track losses and steps
+        fl_total_loss = 0.0
+        fl_steps = 0
+        dlbcl_total_loss = 0.0
+        dlbcl_steps_done = 0
+        
+        # Base global step for this epoch
+        base_global_step = epoch * (fl_batches + dlbcl_steps)
+        
+        # Stage 1: Full pass through FL data
+        print(f"  Stage 1: FL training ({fl_batches} batches)")
+        pbar = tqdm(self.fl_loader, desc=f"Epoch {epoch+1} [FL]", position=0)
+        for batch_idx, (images, labels) in enumerate(pbar):
+            images = images.to(self.device)
+            labels = labels.to(self.device)
+            images = images.float()
+            
+            # Forward pass
+            outputs = self.model(images)
+            loss = self.criterion(outputs, labels)
+            
+            # Backward pass
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+            
+            # Update metrics
+            fl_total_loss += loss.item()
+            fl_steps += 1
+            
+            # Update progress bar
+            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            
+            # Log to tensorboard with monotonic global step
+            global_step = base_global_step + batch_idx
+            self.writer.add_scalar("Loss/train_step", loss.item(), global_step)
+            self.writer.add_scalar("Loss/fl_step", loss.item(), global_step)
+        
+        # Stage 2: DLBCL steps
+        if dlbcl_steps > 0:
+            print(f"  Stage 2: DLBCL training ({dlbcl_steps} steps)")
+            
+            # Create an iterator that can be cycled if needed
+            dlbcl_iter = iter(self.dlbcl_loader)
+            
+            pbar = tqdm(range(dlbcl_steps), desc=f"Epoch {epoch+1} [DLBCL]", position=0)
+            for step_idx in pbar:
+                try:
+                    images, labels = next(dlbcl_iter)
+                except StopIteration:
+                    # Cycle the DLBCL loader if we run out of data
+                    dlbcl_iter = iter(self.dlbcl_loader)
+                    images, labels = next(dlbcl_iter)
+                
+                images = images.to(self.device)
+                labels = labels.to(self.device)
+                images = images.float()
+                
+                # Forward pass
+                outputs = self.model(images)
+                loss = self.criterion(outputs, labels)
+                
+                # Backward pass
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                
+                # Update metrics
+                dlbcl_total_loss += loss.item()
+                dlbcl_steps_done += 1
+                
+                # Update progress bar
+                pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+                
+                # Log to tensorboard with monotonic global step
+                global_step = base_global_step + fl_steps + step_idx
+                self.writer.add_scalar("Loss/train_step", loss.item(), global_step)
+                self.writer.add_scalar("Loss/dlbcl_step", loss.item(), global_step)
+        
+        # Calculate average losses
+        fl_avg_loss = fl_total_loss / fl_steps if fl_steps > 0 else 0.0
+        dlbcl_avg_loss = dlbcl_total_loss / dlbcl_steps_done if dlbcl_steps_done > 0 else 0.0
+        
+        # Combined loss weighted by number of steps
+        total_steps = fl_steps + dlbcl_steps_done
+        if total_steps > 0:
+            combined_loss = (fl_total_loss + dlbcl_total_loss) / total_steps
+        else:
+            combined_loss = 0.0
+        
+        # Calculate effective ratios
+        fl_ratio = fl_steps / total_steps if total_steps > 0 else 0.0
+        dlbcl_ratio = dlbcl_steps_done / total_steps if total_steps > 0 else 0.0
+        
+        # Log domain statistics
+        print(f"\n  Domain Statistics:")
+        print(f"    FL steps: {fl_steps} ({fl_ratio:.2%}), avg loss: {fl_avg_loss:.4f}")
+        print(f"    DLBCL steps: {dlbcl_steps_done} ({dlbcl_ratio:.2%}), avg loss: {dlbcl_avg_loss:.4f}")
+        print(f"    Total steps: {total_steps}, combined loss: {combined_loss:.4f}")
+        
+        # Log to tensorboard
+        self.writer.add_scalar("Domain/fl_steps", fl_steps, epoch)
+        self.writer.add_scalar("Domain/dlbcl_steps", dlbcl_steps_done, epoch)
+        self.writer.add_scalar("Domain/fl_ratio", fl_ratio, epoch)
+        self.writer.add_scalar("Domain/dlbcl_ratio", dlbcl_ratio, epoch)
+        self.writer.add_scalar("Loss/fl_avg", fl_avg_loss, epoch)
+        self.writer.add_scalar("Loss/dlbcl_avg", dlbcl_avg_loss, epoch)
+        self.writer.add_scalar("Loss/combined", combined_loss, epoch)
+        
+        return combined_loss
         
         return avg_loss
     

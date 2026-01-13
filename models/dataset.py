@@ -501,7 +501,12 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         is_train: Whether this is for training (enables augmentation)
     
     Returns:
-        data_loader: PyTorch DataLoader (or tuple of (loader, dataset) for mixed training)
+        For training with fl_epoch_plus_dlbcl mode:
+            dict with keys 'fl_loader', 'dlbcl_loader'
+        For training with old probabilistic mode or no mixed training:
+            data_loader (or tuple of (loader, dataset) for backward compat)
+        For validation:
+            data_loader
     """
     augmentation = config["augmentation"] if is_train else None
     
@@ -509,9 +514,72 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         # Check if mixed domain training is enabled
         mixed_config = config.get("training", {}).get("mixed_domains", {})
         use_mixed = mixed_config.get("enabled", False)
+        mixed_mode = mixed_config.get("mode", "probabilistic")  # Default to old mode
         
-        if use_mixed:
-            # Use MixedPatchDataset for mixed FL + DLBCL training
+        if use_mixed and mixed_mode == "fl_epoch_plus_dlbcl":
+            # New step-based mode: return separate FL and DLBCL loaders
+            domain_config = config.get("data", {}).get("domains", {})
+            batch_size = config["training"]["batch_size"]
+            
+            # Create FL dataset and loader
+            fl_config = {
+                'domain': 'fl',
+                'fl_prefix_max': domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX),
+                'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN),
+                'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX)
+            }
+            
+            fl_dataset = PatchDataset(
+                data_dir=data_dir,
+                split_file=split_file,
+                patch_size=config["data"]["patch_size"],
+                lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
+                augmentation=augmentation,
+                seed=config["experiment"]["seed"],
+                domain_config=fl_config
+            )
+            
+            fl_loader = DataLoader(
+                fl_dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=16,
+                pin_memory=True
+            )
+            
+            # Create DLBCL dataset and loader
+            dlbcl_config = {
+                'domain': 'dlbcl',
+                'fl_prefix_max': domain_config.get('fl_prefix_max', DEFAULT_FL_PREFIX_MAX),
+                'dlbcl_prefix_min': domain_config.get('dlbcl_prefix_min', DEFAULT_DLBCL_PREFIX_MIN),
+                'dlbcl_prefix_max': domain_config.get('dlbcl_prefix_max', DEFAULT_DLBCL_PREFIX_MAX)
+            }
+            
+            dlbcl_dataset = PatchDataset(
+                data_dir=data_dir,
+                split_file=split_file,
+                patch_size=config["data"]["patch_size"],
+                lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
+                augmentation=augmentation,
+                seed=config["experiment"]["seed"] + 1,  # Different seed for DLBCL
+                domain_config=dlbcl_config
+            )
+            
+            dlbcl_loader = DataLoader(
+                dlbcl_dataset,
+                batch_size=batch_size,
+                shuffle=True,  # Shuffle for random DLBCL sampling
+                num_workers=16,
+                pin_memory=True
+            )
+            
+            return {
+                'fl_loader': fl_loader,
+                'dlbcl_loader': dlbcl_loader
+            }
+        
+        elif use_mixed:
+            # Old probabilistic mode: use MixedPatchDataset (backward compatibility)
             domain_config = config.get("data", {}).get("domains", {})
             fl_ratio = mixed_config.get("fl_ratio", 0.5)
             
@@ -525,8 +593,20 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 domain_config=domain_config,
                 fl_ratio=fl_ratio
             )
+            
+            batch_size = config["training"]["batch_size"]
+            data_loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=16,
+                pin_memory=True
+            )
+            
+            # Return both loader and dataset for backward compatibility
+            return data_loader, dataset
         else:
-            # Use standard PatchDataset
+            # Use standard PatchDataset (no mixed training)
             dataset = PatchDataset(
                 data_dir=data_dir,
                 split_file=split_file,
@@ -535,9 +615,17 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 augmentation=augmentation,
                 seed=config["experiment"]["seed"]
             )
-        
-        batch_size = config["training"]["batch_size"]
-        shuffle = True
+            
+            batch_size = config["training"]["batch_size"]
+            data_loader = DataLoader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=True,
+                num_workers=16,
+                pin_memory=True
+            )
+            
+            return data_loader
     else:
         # Validation: Always use FL-only when mixed training is enabled
         mixed_config = config.get("training", {}).get("mixed_domains", {})
@@ -566,20 +654,16 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         
         batch_size = 1
         shuffle = False
-    
-    data_loader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=16,
-        pin_memory=True
-    )
-    
-    # Return both loader and dataset for mixed training (to access sample counts)
-    if is_train and isinstance(dataset, MixedPatchDataset):
-        return data_loader, dataset
-    
-    return data_loader
+        
+        data_loader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=16,
+            pin_memory=True
+        )
+        
+        return data_loader
 
 
 if __name__ == "__main__":
