@@ -5,6 +5,7 @@ Test script for body mask generation and usage
 import sys
 import os
 import tempfile
+import json
 import numpy as np
 import nibabel as nib
 from pathlib import Path
@@ -190,7 +191,6 @@ def test_patch_dataset_with_body_mask():
             "image_size": list(image_shape)
         }
         metadata_path = metadata_dir / f"{case_id}.json"
-        import json
         with open(metadata_path, "w") as f:
             json.dump(metadata, f)
         
@@ -267,7 +267,6 @@ def test_body_mask_backward_compatibility():
             "image_size": list(image_shape)
         }
         metadata_path = metadata_dir / f"{case_id}.json"
-        import json
         with open(metadata_path, "w") as f:
             json.dump(metadata, f)
         
