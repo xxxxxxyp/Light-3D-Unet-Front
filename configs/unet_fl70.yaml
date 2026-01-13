@@ -53,6 +53,17 @@ augmentation:
 data:
   bbox_expansion_mm: 10.0
   bbox_expansion_voxels: 3
+  # Body mask configuration for constraining patch sampling to patient body
+  # Masks are generated from normalized PET images during preprocessing
+  body_mask:
+    enabled: true  # Enable body mask generation and usage
+    threshold: 0.02  # Intensity threshold to distinguish body from air (on normalized 0-1 scale)
+    dilate_voxels: 3  # Number of voxels to dilate mask outward (2-5 recommended)
+    closing_voxels: 5  # Size of structuring element for binary closing
+    keep_largest_component: true  # Keep only largest connected component
+    apply_to_training_sampling: true  # Constrain background sampling to body mask
+    apply_to_validation: true  # Apply mask to validation probability maps
+    apply_to_inference: true  # Apply mask to inference predictions
   dataset: Follicular_Lymphoma
   # Domain configuration for mixed training (FL + DLBCL)
   # Case ID ranges: FL (0000-0122), DLBCL (1000-1422)

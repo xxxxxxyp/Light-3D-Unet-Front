@@ -449,16 +449,31 @@ class Trainer:
         
         # Validation uses CaseDataset which returns full volumes
         # No gradients needed during validation
+        body_mask_config = self.config.get("data", {}).get("body_mask", {})
+        apply_body_mask = body_mask_config.get("apply_to_validation", False) and body_mask_config.get("enabled", False)
+        
         with torch.no_grad():
             pbar = tqdm(self.val_loader, desc=f"Epoch {epoch+1} [Val]")
             for batch in pbar:
-                # CaseDataset returns: (image, label, case_id, spacing)
-                if isinstance(batch, (list, tuple)) and len(batch) >= 4:
-                    images, labels, case_ids, spacings = batch[0], batch[1], batch[2], batch[3]
+                # CaseDataset returns: (image, label, case_id, spacing) or (image, label, case_id, spacing, body_mask)
+                if isinstance(batch, (list, tuple)):
+                    if len(batch) >= 5:
+                        # With body mask
+                        images, labels, case_ids, spacings, body_masks = batch[0], batch[1], batch[2], batch[3], batch[4]
+                    elif len(batch) >= 4:
+                        # Without body mask
+                        images, labels, case_ids, spacings = batch[0], batch[1], batch[2], batch[3]
+                        body_masks = None
+                    else:
+                        # Fallback for unexpected format
+                        images, labels = batch[0], batch[1]
+                        spacings = None
+                        body_masks = None
                 else:
                     # Fallback for unexpected format
                     images, labels = batch[0], batch[1]
                     spacings = None
+                    body_masks = None
                 
                 # Process each case (batch_size=1 for CaseDataset)
                 batch_size = images.shape[0]
@@ -468,10 +483,18 @@ class Trainer:
                     if images.ndim == 5:
                         image = images[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
                         label = labels[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                        if body_masks is not None:
+                            body_mask = body_masks[b, 0].cpu().numpy()  # Remove batch and channel: [D, H, W]
+                        else:
+                            body_mask = None
                     elif images.ndim == 4:
                         # In case batch dimension is already removed
                         image = images[0].cpu().numpy() if b == 0 else images[b].cpu().numpy()
                         label = labels[0].cpu().numpy() if b == 0 else labels[b].cpu().numpy()
+                        if body_masks is not None:
+                            body_mask = body_masks[0].cpu().numpy() if b == 0 else body_masks[b].cpu().numpy()
+                        else:
+                            body_mask = None
                     else:
                         raise ValueError(f"Unexpected image shape: {images.shape}")
                     
@@ -484,6 +507,10 @@ class Trainer:
                         device=self.device,
                         use_gaussian=True
                     )
+                    
+                    # Apply body mask if enabled and available
+                    if apply_body_mask and body_mask is not None:
+                        prob_map = prob_map * body_mask
                     
                     # Store predictions and labels
                     all_predictions.append(prob_map)
