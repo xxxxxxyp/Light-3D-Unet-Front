@@ -182,8 +182,13 @@ training:
   # Validation always remains FL-only for consistent evaluation
   mixed_domains:
     enabled: true  # Mixed FL + DLBCL training enabled
-    fl_ratio: 0.5   # 50% FL samples in training
-    dlbcl_ratio: 0.5  # 50% DLBCL samples (informational only)
+    mode: fl_epoch_plus_dlbcl  # "fl_epoch_plus_dlbcl" (step-based) or "probabilistic" (old mode)
+    # Step-based mode: Each epoch does full FL pass + additional DLBCL steps
+    dlbcl_steps_ratio: 1.0  # DLBCL steps = round(FL_batches * ratio). Example: 1.0 = same as FL
+    dlbcl_steps: null  # Optional: override dlbcl_steps_ratio with exact step count
+    # Probabilistic mode (backward compatibility):
+    fl_ratio: 0.5   # 50% FL samples in training (only used if mode=probabilistic)
+    dlbcl_ratio: 0.5  # 50% DLBCL samples (informational only, only used if mode=probabilistic)
   optimizer: AdamW
   scheduler:
     T_max: 200

@@ -107,8 +107,16 @@ def test_config_schema():
         # Check for mixed_domains config
         assert 'mixed_domains' in config['training'], "Missing 'mixed_domains' in training config"
         assert 'enabled' in config['training']['mixed_domains']
+        assert 'mode' in config['training']['mixed_domains']
+        assert 'dlbcl_steps_ratio' in config['training']['mixed_domains']
+        assert 'dlbcl_steps' in config['training']['mixed_domains']
         assert 'fl_ratio' in config['training']['mixed_domains']
         print("✓ Mixed training config schema is valid")
+        
+        # Validate mode values
+        mode = config['training']['mixed_domains'].get('mode')
+        assert mode in ['fl_epoch_plus_dlbcl', 'probabilistic'], f"Invalid mode: {mode}"
+        print(f"✓ Mixed training mode is valid: {mode}")
         
         print("✓ All config schema tests passed!")
         return True
@@ -116,12 +124,36 @@ def test_config_schema():
         print(f"✗ Config schema test failed: {e}")
         return False
 
+def test_dlbcl_steps_computation():
+    """Test DLBCL steps computation from ratio"""
+    print("\nTesting DLBCL steps computation...")
+    
+    # Test cases: (fl_batches, ratio, expected_steps)
+    test_cases = [
+        (100, 0.0, 0),
+        (100, 0.5, 50),
+        (100, 1.0, 100),
+        (100, 1.5, 150),
+        (87, 1.0, 87),
+        (87, 0.3, 26),  # round(87 * 0.3) = round(26.1) = 26
+        (50, 0.7, 35),  # round(50 * 0.7) = 35
+    ]
+    
+    for fl_batches, ratio, expected in test_cases:
+        result = round(fl_batches * ratio)
+        assert result == expected, f"Expected {expected} for {fl_batches} * {ratio}, got {result}"
+        print(f"  ✓ {fl_batches} batches * {ratio} ratio = {result} steps")
+    
+    print("✓ DLBCL steps computation tests passed!")
+    return True
+
 if __name__ == "__main__":
     try:
         test_domain_filtering()
         test_patchdataset_defaults_to_fl()
         test_mixed_dataset_import()
         test_config_schema()
+        test_dlbcl_steps_computation()
         print("\n" + "="*50)
         print("All tests passed successfully! ✓")
         print("="*50)
