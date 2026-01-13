@@ -11,6 +11,7 @@ import nibabel as nib
 from pathlib import Path
 from datetime import datetime
 from tqdm import tqdm
+from scipy import ndimage
 
 
 def clip_and_normalize(image, low_percentile=0.5, high_percentile=99.5, target_range=(0, 1)):
@@ -83,6 +84,92 @@ def calculate_voxel_thresholds(spacing, volume_cc_list):
     return thresholds
 
 
+def generate_body_mask(normalized_image, body_mask_config):
+    """
+    Generate body mask from normalized PET image to exclude air/background.
+    
+    The mask is created by:
+    1. Thresholding normalized image to detect body vs air
+    2. Binary closing to fill holes and smooth boundaries
+    3. Keeping largest connected component to remove table/noise
+    4. Dilating outward to ensure full body coverage
+    
+    Args:
+        normalized_image: Normalized image array (0-1 scale)
+        body_mask_config: Configuration dict with keys:
+            - threshold: Intensity threshold (default 0.02)
+            - closing_voxels: Size of closing structuring element (default 5)
+            - keep_largest_component: Whether to keep only largest component (default True)
+            - dilate_voxels: Number of voxels to dilate (default 3)
+    
+    Returns:
+        body_mask: Boolean array of same shape as input
+        mask_metadata: Dictionary with mask generation metadata
+    """
+    threshold = body_mask_config.get("threshold", 0.02)
+    closing_voxels = body_mask_config.get("closing_voxels", 5)
+    keep_largest = body_mask_config.get("keep_largest_component", True)
+    dilate_voxels = body_mask_config.get("dilate_voxels", 3)
+    
+    # Initial threshold
+    body_mask = normalized_image > threshold
+    initial_voxels = np.sum(body_mask)
+    
+    # Binary closing to fill holes and connect nearby regions
+    if closing_voxels > 0:
+        struct_elem = ndimage.generate_binary_structure(3, 1)
+        struct_elem = ndimage.iterate_structure(struct_elem, closing_voxels)
+        body_mask = ndimage.binary_closing(body_mask, structure=struct_elem)
+    
+    after_closing_voxels = np.sum(body_mask)
+    
+    # Keep largest connected component (removes table, noise)
+    largest_component_voxels = after_closing_voxels
+    if keep_largest:
+        labeled, num_features = ndimage.label(body_mask)
+        if num_features > 0:
+            # Find largest component
+            component_sizes = ndimage.sum(body_mask, labeled, range(1, num_features + 1))
+            largest_component = np.argmax(component_sizes) + 1
+            body_mask = labeled == largest_component
+            largest_component_voxels = np.sum(body_mask)
+    
+    # Dilate to ensure full coverage of body boundaries
+    if dilate_voxels > 0:
+        struct_elem = ndimage.generate_binary_structure(3, 1)
+        body_mask = ndimage.binary_dilation(body_mask, structure=struct_elem, iterations=dilate_voxels)
+    
+    final_voxels = np.sum(body_mask)
+    
+    # Calculate bounding box
+    coords = np.argwhere(body_mask)
+    if len(coords) > 0:
+        bbox_min = coords.min(axis=0).tolist()
+        bbox_max = coords.max(axis=0).tolist()
+    else:
+        bbox_min = [0, 0, 0]
+        bbox_max = list(body_mask.shape)
+    
+    mask_metadata = {
+        "threshold": float(threshold),
+        "closing_voxels": int(closing_voxels),
+        "keep_largest_component": bool(keep_largest),
+        "dilate_voxels": int(dilate_voxels),
+        "voxel_counts": {
+            "initial": int(initial_voxels),
+            "after_closing": int(after_closing_voxels),
+            "after_largest_component": int(largest_component_voxels),
+            "final": int(final_voxels)
+        },
+        "bbox": {
+            "min": bbox_min,
+            "max": bbox_max
+        }
+    }
+    
+    return body_mask.astype(bool), mask_metadata
+
+
 def preprocess_case(case_id, raw_dir, processed_dir, config):
     """
     Preprocess a single case
@@ -125,9 +212,11 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
     processed_images_dir = processed_dir / "images"
     processed_labels_dir = processed_dir / "labels"
     processed_metadata_dir = processed_dir / "metadata"
+    processed_body_masks_dir = processed_dir / "body_masks"
     processed_images_dir.mkdir(parents=True, exist_ok=True)
     processed_labels_dir.mkdir(parents=True, exist_ok=True)
     processed_metadata_dir.mkdir(parents=True, exist_ok=True)
+    processed_body_masks_dir.mkdir(parents=True, exist_ok=True)
     
     # Process each image file (typically one PET scan per case)
     metadata_list = []
@@ -154,6 +243,19 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
             high_percentile=config["intensity"]["clip_percentile_high"],
             target_range=config["intensity"]["normalization_range"]
         )
+        
+        # Generate body mask if enabled
+        body_mask_metadata = None
+        if config.get("body_mask", {}).get("enabled", False):
+            body_mask, body_mask_metadata = generate_body_mask(
+                normalized_img,
+                config["body_mask"]
+            )
+            
+            # Save body mask
+            output_mask_path = processed_body_masks_dir / f"{case_id}.nii.gz"
+            mask_nii = nib.Nifti1Image(body_mask.astype(np.uint8), affine, header)
+            nib.save(mask_nii, output_mask_path)
         
         # Calculate voxel thresholds
         voxel_thresholds = calculate_voxel_thresholds(
@@ -182,6 +284,10 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
             "bbox_expansion_mm": config["bbox_expansion_mm"],
             "bbox_expansion_voxels": config["bbox_expansion_voxels"]
         }
+        
+        # Add body mask metadata if generated
+        if body_mask_metadata is not None:
+            case_metadata["body_mask"] = body_mask_metadata
         
         metadata_list.append(case_metadata)
     
@@ -277,6 +383,7 @@ def main():
         "volume_threshold": full_config["data"]["volume_threshold"],
         "bbox_expansion_mm": full_config["data"]["bbox_expansion_mm"],
         "bbox_expansion_voxels": full_config["data"]["bbox_expansion_voxels"],
+        "body_mask": full_config["data"].get("body_mask", {"enabled": False}),
         "seed": full_config["experiment"]["seed"]
     }
     

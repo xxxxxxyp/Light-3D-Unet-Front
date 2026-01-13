@@ -81,15 +81,18 @@ class CaseDataset(Dataset):
     """
     Dataset for full-case validation/inference
     Returns full volume (or ROI), label, case_id, and spacing
+    Optionally returns body mask for masking predictions
     """
-    def __init__(self, data_dir, split_file, domain_config=None):
+    def __init__(self, data_dir, split_file, domain_config=None, return_body_mask=False):
         """
         Args:
             data_dir: Path to processed data directory
             split_file: Path to split list file
             domain_config: Optional domain filtering configuration
+            return_body_mask: Whether to return body mask along with image/label
         """
         self.data_dir = Path(data_dir)
+        self.return_body_mask = return_body_mask
 
         with open(split_file, "r") as f:
             all_case_ids = [line.strip() for line in f if line.strip()]
@@ -104,11 +107,14 @@ class CaseDataset(Dataset):
 
             if len(image_files) > 0 and len(label_files) > 0:
                 metadata_path = self.data_dir / "metadata" / f"{case_id}.json"
+                body_mask_path = self.data_dir / "body_masks" / f"{case_id}.nii.gz"
+                
                 self.cases.append({
                     "case_id": case_id,
                     "image_path": str(image_files[0]),
                     "label_path": str(label_files[0]),
-                    "metadata_path": str(metadata_path) if metadata_path.exists() else None
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None,
+                    "body_mask_path": str(body_mask_path) if body_mask_path.exists() else None
                 })
             else:
                 warnings.warn(
@@ -118,6 +124,10 @@ class CaseDataset(Dataset):
                 )
 
         print(f"Loaded {len(self.cases)} cases from {split_file}")
+        
+        if self.return_body_mask:
+            cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
+            print(f"Body masks available for {cases_with_masks}/{len(self.cases)} cases")
 
     def __len__(self):
         return len(self.cases)
@@ -135,7 +145,23 @@ class CaseDataset(Dataset):
         image = torch.from_numpy(image).unsqueeze(0)
         label = torch.from_numpy(label).unsqueeze(0)
 
-        return image, label, case["case_id"], spacing
+        if self.return_body_mask:
+            # Load body mask if available
+            if case["body_mask_path"] is not None:
+                try:
+                    body_mask_nii = nib.load(case["body_mask_path"])
+                    body_mask = body_mask_nii.get_fdata().astype(np.float32)
+                    body_mask = torch.from_numpy(body_mask).unsqueeze(0)
+                except Exception as e:
+                    warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Using full volume.")
+                    body_mask = torch.ones_like(label)
+            else:
+                # No body mask available - return all ones
+                body_mask = torch.ones_like(label)
+            
+            return image, label, case["case_id"], spacing, body_mask
+        else:
+            return image, label, case["case_id"], spacing
 
 
 class PatchDataset(Dataset):
@@ -186,11 +212,14 @@ class PatchDataset(Dataset):
             if len(image_files) > 0 and len(label_files) > 0:
                 # Metadata is stored in metadata/{case_id}.json
                 metadata_path = self.data_dir / "metadata" / f"{case_id}.json"
+                body_mask_path = self.data_dir / "body_masks" / f"{case_id}.nii.gz"
+                
                 self.cases.append({
                     "case_id": case_id,
                     "image_path": str(image_files[0]),
                     "label_path": str(label_files[0]),
-                    "metadata_path": str(metadata_path) if metadata_path.exists() else None
+                    "metadata_path": str(metadata_path) if metadata_path.exists() else None,
+                    "body_mask_path": str(body_mask_path) if body_mask_path.exists() else None
                 })
             else:
                 print(f"Warning: Case {case_id} not found (images: {len(image_files)}, labels: {len(label_files)}), skipping...")
@@ -205,6 +234,16 @@ class PatchDataset(Dataset):
             label_nii = nib.load(case["label_path"])
             label = label_nii.get_fdata()
             
+            # Load body mask if available
+            body_mask = None
+            if case["body_mask_path"] is not None:
+                try:
+                    body_mask_nii = nib.load(case["body_mask_path"])
+                    body_mask = body_mask_nii.get_fdata().astype(bool)
+                except Exception as e:
+                    warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Falling back to full volume.")
+                    body_mask = None
+            
             # Find lesion voxels
             lesion_coords = np.argwhere(label > 0)
             
@@ -214,12 +253,29 @@ class PatchDataset(Dataset):
                     idx = np.random.randint(len(lesion_coords))
                     self.lesion_locations.append((case_idx, lesion_coords[idx]))
             
-            # Sample background locations
-            background_coords = np.argwhere(label == 0)
+            # Sample background locations - constrain to body mask if available
+            if body_mask is not None:
+                # Background is within body mask but not lesion
+                background_coords = np.argwhere((label == 0) & body_mask)
+                if len(background_coords) == 0:
+                    # Fallback if no background in body mask
+                    warnings.warn(f"Case {case['case_id']}: No background voxels found within body mask. Using full volume.")
+                    background_coords = np.argwhere(label == 0)
+            else:
+                # No body mask available - use all background
+                background_coords = np.argwhere(label == 0)
+            
             if len(background_coords) > 0:
                 for _ in range(max(10, len(background_coords) // 5000)):  # Sample background
                     idx = np.random.randint(len(background_coords))
                     self.background_locations.append((case_idx, background_coords[idx]))
+        
+        # Count cases with/without body masks
+        cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
+        if cases_with_masks == 0:
+            warnings.warn("No body masks found for any cases. Background sampling will use full volume.")
+        else:
+            print(f"Body masks available for {cases_with_masks}/{len(self.cases)} cases")
         
         print(f"Found {len(self.lesion_locations)} lesion locations, "
               f"{len(self.background_locations)} background locations")
@@ -631,6 +687,10 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         mixed_config = config.get("training", {}).get("mixed_domains", {})
         use_mixed = mixed_config.get("enabled", False)
         
+        # Check if body mask should be returned for validation/inference
+        body_mask_config = config.get("data", {}).get("body_mask", {})
+        apply_to_validation = body_mask_config.get("apply_to_validation", False) and body_mask_config.get("enabled", False)
+        
         if use_mixed:
             # Filter validation to FL-only
             domain_config = config.get("data", {}).get("domains", {})
@@ -643,13 +703,15 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
             dataset = CaseDataset(
                 data_dir=data_dir,
                 split_file=split_file,
-                domain_config=fl_config
+                domain_config=fl_config,
+                return_body_mask=apply_to_validation
             )
         else:
             # Standard validation (no filtering)
             dataset = CaseDataset(
                 data_dir=data_dir,
-                split_file=split_file
+                split_file=split_file,
+                return_body_mask=apply_to_validation
             )
         
         batch_size = 1

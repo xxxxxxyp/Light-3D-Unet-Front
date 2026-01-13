@@ -218,12 +218,30 @@ class Inferencer:
         spacing = [float(s) for s in spacing]
         
         # Load metadata
-        metadata_path = case_dir / "metadata.json"
+        metadata_path = data_dir / "metadata" / f"{case_id}.json"
         if metadata_path.exists():
             with open(metadata_path, "r") as f:
                 metadata = json.load(f)
         else:
             metadata = {}
+        
+        # Load body mask if enabled
+        body_mask_config = self.config.get("data", {}).get("body_mask", {})
+        apply_body_mask = body_mask_config.get("apply_to_inference", False) and body_mask_config.get("enabled", False)
+        body_mask = None
+        
+        if apply_body_mask:
+            body_mask_path = data_dir / "body_masks" / f"{case_id}.nii.gz"
+            if body_mask_path.exists():
+                try:
+                    body_mask_nii = nib.load(body_mask_path)
+                    body_mask = body_mask_nii.get_fdata().astype(bool)
+                    print(f"Loaded body mask for {case_id}")
+                except Exception as e:
+                    print(f"Warning: Failed to load body mask for {case_id}: {e}. Proceeding without mask.")
+                    body_mask = None
+            else:
+                print(f"Warning: Body mask not found for {case_id}. Proceeding without mask.")
         
         # Perform inference
         print(f"Running inference on {case_id}...")
@@ -232,6 +250,11 @@ class Inferencer:
             window_size=tuple(self.config["data"]["patch_size"]),
             stride=24  # 50% overlap
         )
+        
+        # Apply body mask if enabled and available
+        if apply_body_mask and body_mask is not None:
+            prob_map = prob_map * body_mask
+            print(f"Applied body mask to predictions for {case_id}")
         
         # Save probability map
         prob_map_path = self.prob_maps_dir / f"{case_id}_prob.nii.gz"
