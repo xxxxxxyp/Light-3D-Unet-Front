@@ -557,12 +557,13 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         is_train: Whether this is for training (enables augmentation)
     
     Returns:
-        For training with fl_epoch_plus_dlbcl mode:
-            dict with keys 'fl_loader', 'dlbcl_loader'
-        For training with old probabilistic mode or no mixed training:
-            data_loader (or tuple of (loader, dataset) for backward compat)
-        For validation:
-            data_loader
+        dict with keys:
+            - 'mode': str - 'fl_epoch_plus_dlbcl', 'probabilistic', or 'standard'
+            - 'train_loader': DataLoader (for standard and probabilistic modes)
+            - 'train_dataset': Dataset (for probabilistic mode, to track samples)
+            - 'fl_loader': DataLoader (for fl_epoch_plus_dlbcl mode)
+            - 'dlbcl_loader': DataLoader (for fl_epoch_plus_dlbcl mode)
+            - 'val_loader': DataLoader (for validation, when is_train=False)
     """
     augmentation = config["augmentation"] if is_train else None
     
@@ -630,12 +631,15 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
             )
             
             return {
+                'mode': 'fl_epoch_plus_dlbcl',
                 'fl_loader': fl_loader,
-                'dlbcl_loader': dlbcl_loader
+                'dlbcl_loader': dlbcl_loader,
+                'fl_dataset': fl_dataset,
+                'dlbcl_dataset': dlbcl_dataset
             }
         
         elif use_mixed:
-            # Old probabilistic mode: use MixedPatchDataset (backward compatibility)
+            # Old probabilistic mode: use MixedPatchDataset
             domain_config = config.get("data", {}).get("domains", {})
             fl_ratio = mixed_config.get("fl_ratio", 0.5)
             
@@ -659,8 +663,11 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 pin_memory=True
             )
             
-            # Return both loader and dataset for backward compatibility
-            return data_loader, dataset
+            return {
+                'mode': 'probabilistic',
+                'train_loader': data_loader,
+                'train_dataset': dataset  # For sample count tracking
+            }
         else:
             # Use standard PatchDataset (no mixed training)
             dataset = PatchDataset(
@@ -681,7 +688,10 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 pin_memory=True
             )
             
-            return data_loader
+            return {
+                'mode': 'standard',
+                'train_loader': data_loader
+            }
     else:
         # Validation: Always use FL-only when mixed training is enabled
         mixed_config = config.get("training", {}).get("mixed_domains", {})
@@ -725,7 +735,10 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
             pin_memory=True
         )
         
-        return data_loader
+        return {
+            'mode': 'validation',
+            'val_loader': data_loader
+        }
 
 
 if __name__ == "__main__":

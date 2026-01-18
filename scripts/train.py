@@ -107,42 +107,52 @@ class Trainer:
             is_train=True
         )
         
-        # Determine training mode
-        mixed_config = self.config.get("training", {}).get("mixed_domains", {})
-        use_mixed = mixed_config.get("enabled", False)
-        mixed_mode = mixed_config.get("mode", "probabilistic")
+        # Unified dict structure - check mode and extract loaders
+        if not isinstance(train_result, dict):
+            raise TypeError(f"get_data_loader must return a dict, got {type(train_result)}")
         
-        # Handle different training modes
-        if isinstance(train_result, dict) and 'fl_loader' in train_result:
-            # New step-based mode: separate FL and DLBCL loaders
+        mode = train_result.get('mode')
+        if mode == 'fl_epoch_plus_dlbcl':
+            # Step-based mode: separate FL and DLBCL loaders
             self.fl_loader = train_result['fl_loader']
             self.dlbcl_loader = train_result['dlbcl_loader']
             self.train_loader = None
             self.train_dataset = None
             self.use_step_based_mixed = True
             self.use_mixed_training = False
-        elif isinstance(train_result, tuple):
-            # Old probabilistic mode: single loader with MixedPatchDataset
-            self.train_loader, self.train_dataset = train_result
+        elif mode == 'probabilistic':
+            # Probabilistic mode: single loader with MixedPatchDataset
+            self.train_loader = train_result['train_loader']
+            self.train_dataset = train_result['train_dataset']
             self.fl_loader = None
             self.dlbcl_loader = None
             self.use_step_based_mixed = False
             self.use_mixed_training = True
-        else:
+        elif mode == 'standard':
             # Standard mode: single loader
-            self.train_loader = train_result
+            self.train_loader = train_result['train_loader']
             self.train_dataset = None
             self.fl_loader = None
             self.dlbcl_loader = None
             self.use_step_based_mixed = False
             self.use_mixed_training = False
+        else:
+            raise ValueError(f"Unknown training mode: {mode}")
         
-        self.val_loader = get_data_loader(
+        val_result = get_data_loader(
             data_dir=data_dir,
             split_file=f"{splits_dir}/val_list.txt",
             config=self.config,
             is_train=False
         )
+        
+        if not isinstance(val_result, dict):
+            raise TypeError(f"get_data_loader must return a dict for validation, got {type(val_result)}")
+        
+        self.val_loader = val_result['val_loader']
+        
+        # Get mixed config for logging
+        mixed_config = self.config.get("training", {}).get("mixed_domains", {})
         
         # Log mixed training status
         if self.use_step_based_mixed:
@@ -669,11 +679,25 @@ class Trainer:
                 # Get current learning rate
                 current_lr = self.optimizer.param_groups[0]["lr"]
 
-                # Extract metrics using new clearer keys, with fallback to old keys
-                current_recall = val_metrics.get("best_recall", val_metrics.get("lesion_wise_recall", val_metrics.get("recall", 0.0)))
-                current_dsc_macro = val_metrics.get("best_dsc_macro", val_metrics.get("voxel_wise_dsc_macro", 0.0))
-                current_dsc_micro = val_metrics.get("voxel_wise_dsc_micro", val_metrics.get("dsc", 0.0))
-                current_precision = val_metrics.get("lesion_wise_precision", val_metrics.get("precision", 0.0))
+                # Extract metrics using new keys
+                # Note: validate() always returns all keys, so we don't need deep fallback chains
+                # If a key is unexpectedly missing, we want to know about it rather than silently defaulting to 0.0
+                current_recall = val_metrics.get("best_recall")
+                if current_recall is None:
+                    raise KeyError("Missing 'best_recall' in validation metrics. This indicates a bug in the validation function.")
+                
+                current_dsc_macro = val_metrics.get("best_dsc_macro")
+                if current_dsc_macro is None:
+                    raise KeyError("Missing 'best_dsc_macro' in validation metrics. This indicates a bug in the validation function.")
+                
+                current_dsc_micro = val_metrics.get("voxel_wise_dsc_micro")
+                if current_dsc_micro is None:
+                    raise KeyError("Missing 'voxel_wise_dsc_micro' in validation metrics. This indicates a bug in the validation function.")
+                
+                current_precision = val_metrics.get("lesion_wise_precision")
+                if current_precision is None:
+                    raise KeyError("Missing 'lesion_wise_precision' in validation metrics. This indicates a bug in the validation function.")
+                
                 current_threshold = val_metrics.get("best_threshold", self.config["validation"]["default_threshold"])
                 current_fp_per_case = val_metrics.get("fp_per_case", 0.0)
                 

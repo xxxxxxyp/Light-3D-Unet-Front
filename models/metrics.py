@@ -4,12 +4,48 @@ Includes lesion-wise recall, precision, voxel-wise DSC, and FP per case
 """
 
 import numpy as np
+import warnings
 from scipy import ndimage
 from sklearn.metrics import precision_score, recall_score
 
 DEFAULT_SPACING = (4.0, 4.0, 4.0)
 SMOOTH = 1e-6
 SPATIAL_DIMENSIONS = 3
+
+# Deprecated metric key mappings
+DEPRECATED_KEYS = {
+    'dsc': 'voxel_wise_dsc_micro',
+    'recall': 'lesion_wise_recall',
+    'precision': 'lesion_wise_precision'
+}
+
+# Track which deprecated keys have been warned about (per process)
+_deprecated_warnings_issued = set()
+
+
+class MetricsDict(dict):
+    """
+    Dictionary wrapper that tracks access to deprecated metric keys.
+    Issues one-time warnings when deprecated keys are accessed.
+    """
+    
+    def __getitem__(self, key):
+        if key in DEPRECATED_KEYS and key not in _deprecated_warnings_issued:
+            new_key = DEPRECATED_KEYS[key]
+            warnings.warn(
+                f"Metric key '{key}' is deprecated. Use '{new_key}' instead. "
+                f"Deprecated keys are maintained for backward compatibility but may be removed in the future.",
+                DeprecationWarning,
+                stacklevel=2
+            )
+            _deprecated_warnings_issued.add(key)
+        return super().__getitem__(key)
+    
+    def get(self, key, default=None):
+        """Override get to also trigger deprecation warnings"""
+        if key in self:
+            return self[key]
+        return default
 
 
 def calculate_dsc(pred, target, smooth=SMOOTH):
@@ -386,7 +422,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     lesion_f1 = (2 * lesion_precision * lesion_recall) / (lesion_precision + lesion_recall) if (lesion_precision + lesion_recall) > 0 else 0.0
     fp_per_case = total_fp / num_cases if num_cases > 0 else 0.0
 
-    return {
+    return MetricsDict({
         # New clearer keys
         "lesion_wise_recall": lesion_recall,
         "lesion_wise_precision": lesion_precision,
@@ -397,11 +433,11 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         "tp": total_tp,
         "fp": total_fp,
         "fn": total_fn,
-        # Backward compatibility aliases
+        # Backward compatibility aliases (will trigger deprecation warning on access)
         "dsc": voxel_dsc_micro,
         "recall": lesion_recall,
         "precision": lesion_precision
-    }
+    })
 
 
 def test_metrics():
