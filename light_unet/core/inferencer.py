@@ -10,8 +10,8 @@ import torch
 from pathlib import Path
 from tqdm import tqdm
 
-from models.unet3d import Lightweight3DUNet
-from models.metrics import get_connected_components
+from light_unet.models.unet3d import Lightweight3DUNet
+from light_unet.models.metrics import get_connected_components
 from light_unet.utils import find_case_files, sliding_window_inference_3d
 from light_unet.core.config import ConfigManager  # [NEW]
 

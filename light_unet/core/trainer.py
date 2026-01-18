@@ -13,9 +13,9 @@ from pathlib import Path
 from tqdm import tqdm
 
 from light_unet.datasets.loader import get_data_loader
-from models.unet3d import Lightweight3DUNet
-from models.losses import get_loss_function
-from models.metrics import calculate_metrics, DEFAULT_SPACING
+from light_unet.models.unet3d import Lightweight3DUNet
+from light_unet.models.losses import get_loss_function
+from light_unet.models.metrics import calculate_metrics, DEFAULT_SPACING
 from light_unet.utils import sliding_window_inference_3d
 
 from light_unet.core.config import ConfigManager  # [NEW]

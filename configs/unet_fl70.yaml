@@ -53,24 +53,20 @@ augmentation:
 data:
   bbox_expansion_mm: 10.0
   bbox_expansion_voxels: 3
-  # Body mask configuration for constraining patch sampling to patient body
-  # Masks are generated from normalized PET images during preprocessing
   body_mask:
-    enabled: true  # Enable body mask generation and usage
-    threshold: 0.02  # Intensity threshold to distinguish body from air (on normalized 0-1 scale)
-    dilate_voxels: 3  # Number of voxels to dilate mask outward (2-5 recommended)
-    closing_voxels: 5  # Size of structuring element for binary closing
-    keep_largest_component: true  # Keep only largest connected component
-    apply_to_training_sampling: true  # Constrain background sampling to body mask
-    apply_to_validation: true  # Apply mask to validation probability maps
-    apply_to_inference: true  # Apply mask to inference predictions
+    apply_to_inference: true
+    apply_to_training_sampling: true
+    apply_to_validation: true
+    closing_voxels: 5
+    dilate_voxels: 3
+    enabled: true
+    keep_largest_component: true
+    threshold: 0.02
   dataset: Follicular_Lymphoma
-  # Domain configuration for mixed training (FL + DLBCL)
-  # Case ID ranges: FL (0000-0122), DLBCL (1000-1422)
   domains:
-    fl_prefix_max: 122
-    dlbcl_prefix_min: 1000
     dlbcl_prefix_max: 1422
+    dlbcl_prefix_min: 1000
+    fl_prefix_max: 122
   image_size:
   - 144
   - 144
@@ -102,7 +98,7 @@ data:
   volume_threshold:
     inference_cc: 0.5
     train_cc: 0.1
-data_dir: data/processed
+data_dir: C:\Projects\MedImages\Light-3D-Unet-Front\data\processed
 experiment:
   description: Lightweight 3D-UNet for PET-only lesion candidate recall using FL-70%
     data
@@ -172,7 +168,7 @@ output:
   save_every_n_epochs: 10
   save_metadata: true
   tensorboard_dir: logs/tensorboard
-splits_dir: data/splits
+splits_dir: C:\Projects\MedImages\Light-3D-Unet-Front\data\splits
 target_performance:
   description: If not achieved, analyze reasons and provide improvement suggestions
   lesion_wise_recall: 0.8
@@ -189,18 +185,13 @@ training:
     patience: 20
   epochs: 200
   learning_rate: 0.0001
-  # Mixed domain training configuration
-  # When enabled, training uses both FL and DLBCL data with controlled ratio
-  # Validation always remains FL-only for consistent evaluation
   mixed_domains:
-    enabled: false  # Set to true to enable mixed FL + DLBCL training
-    mode: fl_epoch_plus_dlbcl  # "fl_epoch_plus_dlbcl" (step-based) or "probabilistic" (old mode)
-    # Step-based mode (fl_epoch_plus_dlbcl): Each epoch completes one full FL pass, then adds DLBCL steps
-    dlbcl_steps_ratio: 1.0  # DLBCL steps = round(FL_batches * ratio). Example: 1.0 = same steps as FL
-    dlbcl_steps: null  # Optional: override dlbcl_steps_ratio with exact step count (int or null)
-    # Probabilistic mode (backward compatibility): Stochastic sampling per batch
-    fl_ratio: 0.5   # Ratio of FL samples in training (0.0-1.0, only used if mode=probabilistic)
-    dlbcl_ratio: 0.5  # Informational only (DLBCL samples = 1.0 - fl_ratio, only used if mode=probabilistic)
+    dlbcl_ratio: 0.5
+    dlbcl_steps: null
+    dlbcl_steps_ratio: 1.0
+    enabled: false
+    fl_ratio: 0.5
+    mode: fl_epoch_plus_dlbcl
   optimizer: AdamW
   scheduler:
     T_max: 200
