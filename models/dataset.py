@@ -83,16 +83,19 @@ class CaseDataset(Dataset):
     Returns full volume (or ROI), label, case_id, and spacing
     Optionally returns body mask for masking predictions
     """
-    def __init__(self, data_dir, split_file, domain_config=None, return_body_mask=False):
+    def __init__(self, data_dir, split_file, domain_config=None, return_body_mask=False,
+                 body_mask_required=False):
         """
         Args:
             data_dir: Path to processed data directory
             split_file: Path to split list file
             domain_config: Optional domain filtering configuration
             return_body_mask: Whether to return body mask along with image/label
+            body_mask_required: If True, raise error if body mask is missing or fails to load
         """
         self.data_dir = Path(data_dir)
         self.return_body_mask = return_body_mask
+        self.body_mask_required = body_mask_required
 
         with open(split_file, "r") as f:
             all_case_ids = [line.strip() for line in f if line.strip()]
@@ -125,7 +128,17 @@ class CaseDataset(Dataset):
 
         print(f"Loaded {len(self.cases)} cases from {split_file}")
         
-        if self.return_body_mask:
+        # Check body mask enforcement
+        if self.body_mask_required:
+            cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
+            if cases_with_masks < len(self.cases):
+                missing_cases = [c["case_id"] for c in self.cases if c["body_mask_path"] is None]
+                raise FileNotFoundError(
+                    f"Body mask is required but missing for {len(self.cases) - cases_with_masks}/{len(self.cases)} cases: {missing_cases[:5]}... "
+                    f"Please ensure body masks are generated for all cases or disable body mask enforcement."
+                )
+            print(f"Body mask enforcement: ENABLED (all {len(self.cases)} cases have body masks)")
+        elif self.return_body_mask:
             cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
             print(f"Body masks available for {cases_with_masks}/{len(self.cases)} cases")
 
@@ -153,11 +166,24 @@ class CaseDataset(Dataset):
                     body_mask = body_mask_nii.get_fdata().astype(np.float32)
                     body_mask = torch.from_numpy(body_mask).unsqueeze(0)
                 except Exception as e:
-                    warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Using full volume.")
-                    body_mask = torch.ones_like(label)
+                    if self.body_mask_required:
+                        # In strict mode, fail hard on load errors
+                        raise RuntimeError(
+                            f"Failed to load required body mask for case {case['case_id']}: {e}"
+                        ) from e
+                    else:
+                        # In non-strict mode, warn and fallback to full volume
+                        warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Using full volume.")
+                        body_mask = torch.ones_like(label)
             else:
-                # No body mask available - return all ones
-                body_mask = torch.ones_like(label)
+                if self.body_mask_required:
+                    # This should have been caught in __init__, but double-check
+                    raise FileNotFoundError(
+                        f"Body mask is required but not available for case {case['case_id']}."
+                    )
+                else:
+                    # No body mask available - return all ones as fallback
+                    body_mask = torch.ones_like(label)
             
             return image, label, case["case_id"], spacing, body_mask
         else:
@@ -169,7 +195,8 @@ class PatchDataset(Dataset):
     Dataset for 3D patch extraction with class-balanced sampling
     """
     def __init__(self, data_dir, split_file, patch_size=(48, 48, 48),
-                 lesion_patch_ratio=0.5, augmentation=None, seed=42, domain_config=None):
+                 lesion_patch_ratio=0.5, augmentation=None, seed=42, domain_config=None,
+                 body_mask_config=None):
         """
         Args:
             data_dir: Path to processed data directory
@@ -179,12 +206,22 @@ class PatchDataset(Dataset):
             augmentation: Augmentation configuration dictionary
             seed: Random seed
             domain_config: Optional domain filtering configuration
+            body_mask_config: Body mask configuration dict with keys:
+                - enabled: bool - Whether body mask is enabled
+                - apply_to_training_sampling: bool - If True, enforce body mask presence for training
         """
         self.data_dir = Path(data_dir)
         self.patch_size = patch_size
         self.lesion_patch_ratio = lesion_patch_ratio
         self.augmentation = augmentation
         self.seed = seed
+        
+        # Body mask enforcement settings
+        self.body_mask_enabled = body_mask_config.get("enabled", False) if body_mask_config else False
+        self.body_mask_required = (
+            self.body_mask_enabled and 
+            body_mask_config.get("apply_to_training_sampling", False) if body_mask_config else False
+        )
         
         # Set random seed
         random.seed(seed)
@@ -226,6 +263,18 @@ class PatchDataset(Dataset):
         
         print(f"Loaded {len(self.cases)} cases from {split_file}")
         
+        # Check body mask enforcement
+        if self.body_mask_required:
+            cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
+            if cases_with_masks < len(self.cases):
+                missing_cases = [c["case_id"] for c in self.cases if c["body_mask_path"] is None]
+                raise FileNotFoundError(
+                    f"Body mask is required (enabled=True, apply_to_training_sampling=True) but missing for "
+                    f"{len(self.cases) - cases_with_masks}/{len(self.cases)} cases: {missing_cases[:5]}... "
+                    f"Please ensure body masks are generated for all training cases or disable body mask enforcement."
+                )
+            print(f"Body mask enforcement: ENABLED (all {len(self.cases)} cases have body masks)")
+        
         # Pre-compute lesion locations for class-balanced sampling
         self.lesion_locations = []
         self.background_locations = []
@@ -241,8 +290,15 @@ class PatchDataset(Dataset):
                     body_mask_nii = nib.load(case["body_mask_path"])
                     body_mask = body_mask_nii.get_fdata().astype(bool)
                 except Exception as e:
-                    warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Falling back to full volume.")
-                    body_mask = None
+                    if self.body_mask_required:
+                        # In strict mode, fail hard on load errors
+                        raise RuntimeError(
+                            f"Failed to load required body mask for case {case['case_id']}: {e}"
+                        ) from e
+                    else:
+                        # In non-strict mode, warn and fallback
+                        warnings.warn(f"Failed to load body mask for case {case['case_id']}: {e}. Falling back to full volume.")
+                        body_mask = None
             
             # Find lesion voxels
             lesion_coords = np.argwhere(label > 0)
@@ -258,24 +314,40 @@ class PatchDataset(Dataset):
                 # Background is within body mask but not lesion
                 background_coords = np.argwhere((label == 0) & body_mask)
                 if len(background_coords) == 0:
-                    # Fallback if no background in body mask
-                    warnings.warn(f"Case {case['case_id']}: No background voxels found within body mask. Using full volume.")
-                    background_coords = np.argwhere(label == 0)
+                    if self.body_mask_required:
+                        # In strict mode, this is an error - body mask should have background region
+                        raise ValueError(
+                            f"Case {case['case_id']}: No background voxels found within body mask. "
+                            f"Body mask may be invalid or too restrictive."
+                        )
+                    else:
+                        # In non-strict mode, fallback to full volume
+                        warnings.warn(f"Case {case['case_id']}: No background voxels found within body mask. Using full volume.")
+                        background_coords = np.argwhere(label == 0)
             else:
-                # No body mask available - use all background
-                background_coords = np.argwhere(label == 0)
+                # No body mask available
+                if self.body_mask_required:
+                    # In strict mode, this should have been caught earlier, but double-check
+                    raise FileNotFoundError(
+                        f"Case {case['case_id']}: Body mask is required but not available."
+                    )
+                else:
+                    # In non-strict mode, use all background
+                    background_coords = np.argwhere(label == 0)
             
             if len(background_coords) > 0:
                 for _ in range(max(10, len(background_coords) // 5000)):  # Sample background
                     idx = np.random.randint(len(background_coords))
                     self.background_locations.append((case_idx, background_coords[idx]))
         
-        # Count cases with/without body masks
+        # Count cases with/without body masks for informational logging
         cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
-        if cases_with_masks == 0:
-            warnings.warn("No body masks found for any cases. Background sampling will use full volume.")
-        else:
-            print(f"Body masks available for {cases_with_masks}/{len(self.cases)} cases")
+        if not self.body_mask_required:
+            # Only log warning in non-strict mode
+            if cases_with_masks == 0:
+                warnings.warn("No body masks found for any cases. Background sampling will use full volume.")
+            else:
+                print(f"Body masks available for {cases_with_masks}/{len(self.cases)} cases")
         
         print(f"Found {len(self.lesion_locations)} lesion locations, "
               f"{len(self.background_locations)} background locations")
@@ -444,7 +516,7 @@ class MixedPatchDataset(Dataset):
     """
     def __init__(self, data_dir, split_file, patch_size=(48, 48, 48),
                  lesion_patch_ratio=0.5, augmentation=None, seed=42,
-                 domain_config=None, fl_ratio=0.5):
+                 domain_config=None, fl_ratio=0.5, body_mask_config=None):
         """
         Args:
             data_dir: Path to processed data directory
@@ -455,6 +527,7 @@ class MixedPatchDataset(Dataset):
             seed: Random seed
             domain_config: Domain configuration with FL and DLBCL ranges
             fl_ratio: Ratio of FL samples in each epoch (0.0-1.0)
+            body_mask_config: Body mask configuration to pass to PatchDataset
         """
         self.seed = seed
         self.fl_ratio = fl_ratio
@@ -474,7 +547,8 @@ class MixedPatchDataset(Dataset):
             lesion_patch_ratio=lesion_patch_ratio,
             augmentation=augmentation,
             seed=seed,
-            domain_config=fl_config
+            domain_config=fl_config,
+            body_mask_config=body_mask_config
         )
         
         # Create DLBCL dataset
@@ -492,7 +566,8 @@ class MixedPatchDataset(Dataset):
             lesion_patch_ratio=lesion_patch_ratio,
             augmentation=augmentation,
             seed=seed + 1,  # Different seed for DLBCL
-            domain_config=dlbcl_config
+            domain_config=dlbcl_config,
+            body_mask_config=body_mask_config
         )
         
         # Track sample counts for logging
@@ -566,6 +641,7 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
             - 'val_loader': DataLoader (for validation, when is_train=False)
     """
     augmentation = config["augmentation"] if is_train else None
+    body_mask_config = config.get("data", {}).get("body_mask", {})
     
     if is_train:
         # Check if mixed domain training is enabled
@@ -593,7 +669,8 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
                 augmentation=augmentation,
                 seed=config["experiment"]["seed"],
-                domain_config=fl_config
+                domain_config=fl_config,
+                body_mask_config=body_mask_config
             )
             
             fl_loader = DataLoader(
@@ -619,7 +696,8 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
                 augmentation=augmentation,
                 seed=config["experiment"]["seed"] + 1,  # Different seed for DLBCL
-                domain_config=dlbcl_config
+                domain_config=dlbcl_config,
+                body_mask_config=body_mask_config
             )
             
             dlbcl_loader = DataLoader(
@@ -651,7 +729,8 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 augmentation=augmentation,
                 seed=config["experiment"]["seed"],
                 domain_config=domain_config,
-                fl_ratio=fl_ratio
+                fl_ratio=fl_ratio,
+                body_mask_config=body_mask_config
             )
             
             batch_size = config["training"]["batch_size"]
@@ -676,7 +755,8 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 patch_size=config["data"]["patch_size"],
                 lesion_patch_ratio=config["training"]["class_balanced_sampling"]["lesion_patch_ratio"],
                 augmentation=augmentation,
-                seed=config["experiment"]["seed"]
+                seed=config["experiment"]["seed"],
+                body_mask_config=body_mask_config
             )
             
             batch_size = config["training"]["batch_size"]
@@ -698,8 +778,8 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
         use_mixed = mixed_config.get("enabled", False)
         
         # Check if body mask should be returned for validation/inference
-        body_mask_config = config.get("data", {}).get("body_mask", {})
         apply_to_validation = body_mask_config.get("apply_to_validation", False) and body_mask_config.get("enabled", False)
+        body_mask_required = apply_to_validation  # Enforce body mask if applying to validation
         
         if use_mixed:
             # Filter validation to FL-only
@@ -714,14 +794,16 @@ def get_data_loader(data_dir, split_file, config, is_train=True):
                 data_dir=data_dir,
                 split_file=split_file,
                 domain_config=fl_config,
-                return_body_mask=apply_to_validation
+                return_body_mask=apply_to_validation,
+                body_mask_required=body_mask_required
             )
         else:
             # Standard validation (no filtering)
             dataset = CaseDataset(
                 data_dir=data_dir,
                 split_file=split_file,
-                return_body_mask=apply_to_validation
+                return_body_mask=apply_to_validation,
+                body_mask_required=body_mask_required
             )
         
         batch_size = 1
