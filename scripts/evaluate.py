@@ -16,8 +16,8 @@ from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.metrics import calculate_lesion_metrics, calculate_dsc
-from models.utils import find_case_files
+from light_unet.metrics import calculate_lesion_metrics, calculate_dsc
+from light_unet.utils import find_case_files
 
 
 def evaluate_case(case_id, prob_maps_dir, data_dir, thresholds, spacing=(4.0, 4.0, 4.0)):

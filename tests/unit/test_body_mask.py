@@ -143,7 +143,7 @@ def test_patch_dataset_with_body_mask():
     """Test that PatchDataset respects body mask constraints"""
     print("\nTesting PatchDataset with body mask...")
     
-    from models.dataset import PatchDataset
+    from light_unet.data.dataset import PatchDataset
     
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)
@@ -227,7 +227,7 @@ def test_body_mask_backward_compatibility():
     """Test that code works without body masks (backward compatibility)"""
     print("\nTesting backward compatibility (no body masks)...")
     
-    from models.dataset import PatchDataset
+    from light_unet.data.dataset import PatchDataset
     
     with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = Path(tmpdir)

@@ -17,9 +17,9 @@ from scipy import ndimage
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.unet3d import Lightweight3DUNet
-from models.metrics import get_connected_components, calculate_metrics
-from models.utils import find_case_files
+from light_unet.unet3d import Lightweight3DUNet
+from light_unet.metrics import get_connected_components, calculate_metrics
+from light_unet.utils import find_case_files
 
 
 class Inferencer:

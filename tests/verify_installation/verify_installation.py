@@ -141,7 +141,7 @@ def test_model():
     print("="*60)
     
     try:
-        from models.unet3d import Lightweight3DUNet
+        from light_unet.unet3d import Lightweight3DUNet
         import torch
         
         model = Lightweight3DUNet(
@@ -178,7 +178,7 @@ def test_loss():
     print("="*60)
     
     try:
-        from models.losses import FocalTverskyLoss
+        from light_unet.losses import FocalTverskyLoss
         import torch
         
         loss_fn = FocalTverskyLoss(alpha=0.7, beta=0.3, gamma=0.75)

@@ -21,11 +21,11 @@ from tqdm import tqdm
 # Add parent directory to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from models.unet3d import Lightweight3DUNet
-from models.losses import get_loss_function
-from models.dataset import get_data_loader
-from models.metrics import calculate_metrics, DEFAULT_SPACING
-from models.utils import sliding_window_inference_3d
+from light_unet.unet3d import Lightweight3DUNet
+from light_unet.losses import get_loss_function
+from light_unet.data.dataset import get_data_loader
+from light_unet.metrics import calculate_metrics, DEFAULT_SPACING
+from light_unet.utils import sliding_window_inference_3d
 
 
 class Trainer:

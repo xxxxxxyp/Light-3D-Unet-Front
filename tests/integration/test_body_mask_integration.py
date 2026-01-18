@@ -14,7 +14,7 @@ from pathlib import Path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from scripts.preprocess_data import preprocess_case
-from models.dataset import PatchDataset, CaseDataset
+from light_unet.data.dataset import PatchDataset, CaseDataset
 
 
 def test_end_to_end_workflow():

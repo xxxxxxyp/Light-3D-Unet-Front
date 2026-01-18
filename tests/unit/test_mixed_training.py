@@ -6,7 +6,7 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from models.dataset import filter_cases_by_domain
+from light_unet.data.dataset import filter_cases_by_domain
 
 def test_domain_filtering():
     """Test domain filtering functionality"""
@@ -57,7 +57,7 @@ def test_patchdataset_defaults_to_fl():
     """PatchDataset should default to FL-only cases when no domain is provided"""
     print("\nTesting PatchDataset default domain filtering...")
     import tempfile
-    from models.dataset import PatchDataset
+    from light_unet.data.dataset import PatchDataset
     
     with tempfile.TemporaryDirectory() as tmpdir:
         split_file = os.path.join(tmpdir, "split.txt")
@@ -81,7 +81,7 @@ def test_mixed_dataset_import():
     """Test that MixedPatchDataset can be imported"""
     print("\nTesting MixedPatchDataset import...")
     try:
-        from models.dataset import MixedPatchDataset
+        from light_unet.data.dataset import MixedPatchDataset
         print("✓ MixedPatchDataset imported successfully")
     except ImportError as e:
         print(f"✗ Failed to import MixedPatchDataset: {e}")
