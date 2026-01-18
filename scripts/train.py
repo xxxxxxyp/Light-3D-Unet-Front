@@ -679,25 +679,22 @@ class Trainer:
                 # Get current learning rate
                 current_lr = self.optimizer.param_groups[0]["lr"]
 
-                # Extract metrics using new keys
-                # Note: validate() always returns all keys, so we don't need deep fallback chains
-                # If a key is unexpectedly missing, we want to know about it rather than silently defaulting to 0.0
-                current_recall = val_metrics.get("best_recall")
-                if current_recall is None:
-                    raise KeyError("Missing 'best_recall' in validation metrics. This indicates a bug in the validation function.")
+                # Extract metrics - validation always returns all required keys
+                # If any key is missing, it indicates a bug in the validation function
+                def get_required_metric(metrics, key, description):
+                    """Helper to extract required metrics with clear error messages"""
+                    value = metrics.get(key)
+                    if value is None:
+                        raise KeyError(
+                            f"Missing '{key}' ({description}) in validation metrics. "
+                            f"This indicates a bug in the validation function."
+                        )
+                    return value
                 
-                current_dsc_macro = val_metrics.get("best_dsc_macro")
-                if current_dsc_macro is None:
-                    raise KeyError("Missing 'best_dsc_macro' in validation metrics. This indicates a bug in the validation function.")
-                
-                current_dsc_micro = val_metrics.get("voxel_wise_dsc_micro")
-                if current_dsc_micro is None:
-                    raise KeyError("Missing 'voxel_wise_dsc_micro' in validation metrics. This indicates a bug in the validation function.")
-                
-                current_precision = val_metrics.get("lesion_wise_precision")
-                if current_precision is None:
-                    raise KeyError("Missing 'lesion_wise_precision' in validation metrics. This indicates a bug in the validation function.")
-                
+                current_recall = get_required_metric(val_metrics, "best_recall", "best recall after threshold sweep")
+                current_dsc_macro = get_required_metric(val_metrics, "best_dsc_macro", "best macro DSC after threshold sweep")
+                current_dsc_micro = get_required_metric(val_metrics, "voxel_wise_dsc_micro", "voxel-wise DSC micro average")
+                current_precision = get_required_metric(val_metrics, "lesion_wise_precision", "lesion-wise precision")
                 current_threshold = val_metrics.get("best_threshold", self.config["validation"]["default_threshold"])
                 current_fp_per_case = val_metrics.get("fp_per_case", 0.0)
                 

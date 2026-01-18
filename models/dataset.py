@@ -77,6 +77,31 @@ def filter_cases_by_domain(case_ids, domain_config):
     return filtered
 
 
+def _create_missing_body_mask_error(missing_count, total_count, missing_cases, context=""):
+    """
+    Create a standardized error message for missing body masks.
+    
+    Args:
+        missing_count: Number of cases missing body masks
+        total_count: Total number of cases
+        missing_cases: List of case IDs missing body masks
+        context: Additional context (e.g., "training", "validation")
+    
+    Returns:
+        FileNotFoundError with standardized message
+    """
+    case_list = ", ".join([f"'{c}'" for c in missing_cases[:5]])
+    if len(missing_cases) > 5:
+        case_list += "..."
+    
+    context_str = f" for {context}" if context else ""
+    
+    return FileNotFoundError(
+        f"Body mask is required{context_str} but missing for {missing_count}/{total_count} cases: [{case_list}]. "
+        f"Please ensure body masks are generated for all cases or disable body mask enforcement."
+    )
+
+
 class CaseDataset(Dataset):
     """
     Dataset for full-case validation/inference
@@ -133,9 +158,11 @@ class CaseDataset(Dataset):
             cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
             if cases_with_masks < len(self.cases):
                 missing_cases = [c["case_id"] for c in self.cases if c["body_mask_path"] is None]
-                raise FileNotFoundError(
-                    f"Body mask is required but missing for {len(self.cases) - cases_with_masks}/{len(self.cases)} cases: {missing_cases[:5]}... "
-                    f"Please ensure body masks are generated for all cases or disable body mask enforcement."
+                raise _create_missing_body_mask_error(
+                    missing_count=len(self.cases) - cases_with_masks,
+                    total_count=len(self.cases),
+                    missing_cases=missing_cases,
+                    context="validation/inference"
                 )
             print(f"Body mask enforcement: ENABLED (all {len(self.cases)} cases have body masks)")
         elif self.return_body_mask:
@@ -268,10 +295,11 @@ class PatchDataset(Dataset):
             cases_with_masks = sum(1 for c in self.cases if c["body_mask_path"] is not None)
             if cases_with_masks < len(self.cases):
                 missing_cases = [c["case_id"] for c in self.cases if c["body_mask_path"] is None]
-                raise FileNotFoundError(
-                    f"Body mask is required (enabled=True, apply_to_training_sampling=True) but missing for "
-                    f"{len(self.cases) - cases_with_masks}/{len(self.cases)} cases: {missing_cases[:5]}... "
-                    f"Please ensure body masks are generated for all training cases or disable body mask enforcement."
+                raise _create_missing_body_mask_error(
+                    missing_count=len(self.cases) - cases_with_masks,
+                    total_count=len(self.cases),
+                    missing_cases=missing_cases,
+                    context="training"
                 )
             print(f"Body mask enforcement: ENABLED (all {len(self.cases)} cases have body masks)")
         

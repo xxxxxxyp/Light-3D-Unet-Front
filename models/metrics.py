@@ -27,9 +27,11 @@ class MetricsDict(dict):
     """
     Dictionary wrapper that tracks access to deprecated metric keys.
     Issues one-time warnings when deprecated keys are accessed.
+    Stores both new and old keys for backward compatibility.
     """
     
     def __getitem__(self, key):
+        # Issue deprecation warning if accessing an old key
         if key in DEPRECATED_KEYS and key not in _deprecated_warnings_issued:
             new_key = DEPRECATED_KEYS[key]
             warnings.warn(
@@ -39,13 +41,16 @@ class MetricsDict(dict):
                 stacklevel=2
             )
             _deprecated_warnings_issued.add(key)
+        
+        # Access the key normally (both old and new keys exist in the dict)
         return super().__getitem__(key)
     
     def get(self, key, default=None):
         """Override get to also trigger deprecation warnings"""
-        if key in self:
+        try:
             return self[key]
-        return default
+        except KeyError:
+            return default
 
 
 def calculate_dsc(pred, target, smooth=SMOOTH):
