@@ -4,13 +4,24 @@ Training Entrypoint for Lightweight 3D U-Net
 
 import os
 import sys
-import yaml
 import argparse
+from pathlib import Path
 
-# Ensure root directory is in path to import models/light_unet
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# [FIX] Robust path setup
+# Get the absolute path of the project root (2 levels up from scripts/train.py)
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+
+# Force insert project root to the BEGINNING of sys.path
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+# Debug: Verify paths
+print(f"[System] Project root set to: {project_root}")
+print(f"[System] Checking models package: {(project_root / 'models' / '__init__.py').exists()}")
 
 from light_unet.core.trainer import Trainer
+from light_unet.core.config import ConfigManager
 
 def main():
     parser = argparse.ArgumentParser(description="Train Lightweight 3D U-Net")
@@ -23,26 +34,28 @@ def main():
     
     args = parser.parse_args()
     
-    # Load config and override if specified
-    with open(args.config, "r", encoding='utf-8') as f:
-        config = yaml.safe_load(f)
+    # Load config
+    config = ConfigManager.load(args.config)
     
+    # Apply overrides
     if args.data_dir:
         config["data_dir"] = args.data_dir
     else:
-        config["data_dir"] = config.get("data_dir", "data/processed")
+        # Ensure default relative path is resolved relative to project root
+        if not os.path.isabs(config.get("data_dir", "data/processed")):
+            config["data_dir"] = str(project_root / config.get("data_dir", "data/processed"))
     
     if args.splits_dir:
         config["splits_dir"] = args.splits_dir
     else:
-        config["splits_dir"] = config.get("splits_dir", "data/splits")
+        if not os.path.isabs(config.get("splits_dir", "data/splits")):
+            config["splits_dir"] = str(project_root / config.get("splits_dir", "data/splits"))
     
     # Save updated config
-    with open(args.config, "w") as f:
-        yaml.dump(config, f, default_flow_style=False)
+    ConfigManager.save(config, args.config)
     
-    # Create trainer and start training
-    trainer = Trainer(args.config)
+    # Start training
+    trainer = Trainer(config)
     trainer.train()
 
 if __name__ == "__main__":

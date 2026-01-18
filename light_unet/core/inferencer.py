@@ -1,10 +1,9 @@
 """
 Core Inferencer Module
-Encapsulates inference logic, bounding box extraction, and prediction saving.
+Refactored to use ConfigManager and accept flexible config input.
 """
 
 import json
-import yaml
 import numpy as np
 import nibabel as nib
 import torch
@@ -13,16 +12,21 @@ from tqdm import tqdm
 
 from models.unet3d import Lightweight3DUNet
 from models.metrics import get_connected_components
-from models.utils import find_case_files, sliding_window_inference_3d
+from light_unet.utils import find_case_files, sliding_window_inference_3d
+from light_unet.core.config import ConfigManager  # [NEW]
 
 class Inferencer:
     """Inference class for generating predictions"""
     
-    def __init__(self, config_path, model_path):
+    def __init__(self, config_or_path, model_path):
         """Initialize inferencer"""
-        # Load configuration
-        with open(config_path, "r") as f:
-            self.config = yaml.safe_load(f)
+        # [CHANGE] Load configuration using ConfigManager
+        if isinstance(config_or_path, (str, Path)):
+            self.config = ConfigManager.load(str(config_or_path))
+        elif isinstance(config_or_path, dict):
+            self.config = config_or_path
+        else:
+            raise TypeError(f"config_or_path must be str, Path or dict, got {type(config_or_path)}")
         
         # Setup device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

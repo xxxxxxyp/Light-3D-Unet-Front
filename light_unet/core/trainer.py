@@ -1,11 +1,10 @@
 """
 Core Trainer Module
-Encapsulates the training loop, validation, and checkpointing logic.
+Refactored to use ConfigManager and accept flexible config input.
 """
 
 import os
 import json
-import yaml
 import numpy as np
 import torch
 import torch.optim as optim
@@ -13,21 +12,32 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 from tqdm import tqdm
 
+from light_unet.datasets.loader import get_data_loader
 from models.unet3d import Lightweight3DUNet
 from models.losses import get_loss_function
-from datasets.loader import get_data_loader
 from models.metrics import calculate_metrics, DEFAULT_SPACING
-from models.utils import sliding_window_inference_3d
+from light_unet.utils import sliding_window_inference_3d
+
+from light_unet.core.config import ConfigManager  # [NEW]
 
 class Trainer:
     """Trainer class for 3D U-Net"""
     EPS = 1e-8
     
-    def __init__(self, config_path):
-        """Initialize trainer with configuration"""
-        # Load configuration
-        with open(config_path, "r") as f:
-            self.config = yaml.safe_load(f)
+    def __init__(self, config_or_path):
+        """
+        Initialize trainer with configuration
+        
+        Args:
+            config_or_path: Path to config file (str) or config dictionary
+        """
+        # [CHANGE] Load configuration using ConfigManager or use provided dict
+        if isinstance(config_or_path, (str, Path)):
+            self.config = ConfigManager.load(str(config_or_path))
+        elif isinstance(config_or_path, dict):
+            self.config = config_or_path
+        else:
+            raise TypeError(f"config_or_path must be str, Path or dict, got {type(config_or_path)}")
         
         # Set random seeds
         seed = self.config["experiment"]["seed"]
@@ -98,7 +108,7 @@ class Trainer:
             is_train=True
         )
         
-        # Unified dict structure - check mode and extract loaders
+        # Extract loaders
         if not isinstance(train_result, dict):
             raise TypeError(f"get_data_loader must return a dict, got {type(train_result)}")
         

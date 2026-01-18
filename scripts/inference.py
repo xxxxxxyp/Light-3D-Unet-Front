@@ -5,11 +5,16 @@ Inference Entrypoint for Lightweight 3D U-Net
 import os
 import sys
 import argparse
+from pathlib import Path
 
-# Ensure root directory is in path to import models/light_unet
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# [FIX] Robust path setup
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 from light_unet.core.inferencer import Inferencer
+from light_unet.core.config import ConfigManager
 
 def main():
     parser = argparse.ArgumentParser(description="Inference with Lightweight 3D U-Net")
@@ -28,18 +33,32 @@ def main():
     
     args = parser.parse_args()
     
-    # Create inferencer
-    inferencer = Inferencer(args.config, args.model)
+    # Load config
+    config = ConfigManager.load(args.config)
     
+    # Resolve data paths relative to project root if they are relative
+    if not os.path.isabs(args.data_dir):
+        data_dir = str(project_root / args.data_dir)
+    else:
+        data_dir = args.data_dir
+        
+    if not os.path.isabs(args.split_file):
+        split_file = str(project_root / args.split_file)
+    else:
+        split_file = args.split_file
+
     # Override threshold if specified
     if args.threshold is not None:
-        inferencer.config["validation"]["default_threshold"] = args.threshold
+        config["validation"]["default_threshold"] = args.threshold
+    
+    # Create inferencer
+    inferencer = Inferencer(config, args.model)
     
     # Run inference
     if args.case_id:
-        inferencer.infer_case(args.case_id, args.data_dir)
+        inferencer.infer_case(args.case_id, data_dir)
     else:
-        inferencer.infer_split(args.split_file, args.data_dir)
+        inferencer.infer_split(split_file, data_dir)
 
 if __name__ == "__main__":
     main()

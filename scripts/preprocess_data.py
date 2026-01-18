@@ -13,6 +13,10 @@ from datetime import datetime
 from tqdm import tqdm
 from scipy import ndimage
 
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from light_unet.core.config import ConfigManager
+
 
 def clip_and_normalize(image, low_percentile=0.5, high_percentile=99.5, target_range=(0, 1)):
     """
@@ -370,10 +374,8 @@ def main():
     
     args = parser.parse_args()
     
-    # Load configuration
-    import yaml
-    with open(args.config, "r", encoding='utf-8') as f:
-        full_config = yaml.safe_load(f)
+    # [CHANGE] Load configuration using ConfigManager
+    full_config = ConfigManager.load(args.config)
     
     # Extract preprocessing configuration
     config = {

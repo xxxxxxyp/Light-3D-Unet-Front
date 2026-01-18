@@ -10,7 +10,7 @@ from pathlib import Path
 from torch.utils.data import Dataset
 from scipy.ndimage import rotate, zoom
 
-from models.utils import find_case_files
+from light_unet.utils import find_case_files
 from .constants import DEFAULT_FL_DOMAIN_CONFIG, DEFAULT_FL_PREFIX_MAX, DEFAULT_DLBCL_PREFIX_MIN, DEFAULT_DLBCL_PREFIX_MAX
 from .utils import filter_cases_by_domain, create_missing_body_mask_error
 

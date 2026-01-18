@@ -9,7 +9,7 @@ import torch
 from pathlib import Path
 from torch.utils.data import Dataset
 
-from models.utils import find_case_files
+from light_unet.utils import find_case_files
 from .utils import filter_cases_by_domain, create_missing_body_mask_error
 
 class CaseDataset(Dataset):
