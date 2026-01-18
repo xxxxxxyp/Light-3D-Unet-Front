@@ -223,9 +223,9 @@ def test_patch_dataset_with_body_mask():
         print(f"  ✓ Body mask loading successful")
 
 
-def test_body_mask_backward_compatibility():
-    """Test that code works without body masks (backward compatibility)"""
-    print("\nTesting backward compatibility (no body masks)...")
+def test_body_mask_strict_enforcement():
+    """Test that code fails when body masks are required but missing"""
+    print("\nTesting strict body mask enforcement...")
     
     from models.dataset import PatchDataset
     
@@ -270,10 +270,14 @@ def test_body_mask_backward_compatibility():
         with open(metadata_path, "w") as f:
             json.dump(metadata, f)
         
-        # Create dataset (should work without body masks)
-        import warnings
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
+        # Body mask config with strict enforcement
+        body_mask_config = {
+            "enabled": True,
+            "apply_to_training_sampling": True
+        }
+        
+        # Try to create dataset - should fail due to missing body mask
+        try:
             dataset = PatchDataset(
                 data_dir=str(tmpdir),
                 split_file=str(split_file),
@@ -281,15 +285,17 @@ def test_body_mask_backward_compatibility():
                 lesion_patch_ratio=0.5,
                 augmentation=None,
                 seed=42,
-                domain_config=None
+                domain_config=None,
+                body_mask_config=body_mask_config
             )
-            
-            # Should emit warning about no body masks
-            warning_found = any("No body masks found" in str(warning.message) for warning in w)
+            # Should not reach here
+            assert False, "Expected FileNotFoundError but dataset was created successfully"
+        except FileNotFoundError as e:
+            # Expected error
+            assert "Body mask is required" in str(e), f"Unexpected error message: {e}"
+            print(f"  ✓ Correctly raised FileNotFoundError: {e}")
         
-        print(f"  ✓ Dataset works without body masks")
-        print(f"  ✓ Warning emitted: {warning_found}")
-        print(f"  ✓ Found {len(dataset.background_locations)} background locations (full volume)")
+        print(f"  ✓ Strict mode correctly enforces body mask presence")
 
 
 if __name__ == "__main__":
@@ -298,7 +304,7 @@ if __name__ == "__main__":
         test_body_mask_dilation()
         test_body_mask_saves_correctly()
         test_patch_dataset_with_body_mask()
-        test_body_mask_backward_compatibility()
+        test_body_mask_strict_enforcement()
         
         print("\n" + "="*60)
         print("All body mask tests passed successfully! ✓")
