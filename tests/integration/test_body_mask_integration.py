@@ -70,8 +70,8 @@ def test_end_to_end_workflow():
         config = {
             "spacing": {"target": [4.0, 4.0, 4.0]},
             "intensity": {
-                "clip_percentile_low": 0.5,
-                "clip_percentile_high": 99.5,
+                "clip_min": 0.0,
+                "clip_max": 15.0,
                 "normalization_range": [0, 1]
             },
             "patch_size": [16, 16, 16],
@@ -129,6 +129,9 @@ def test_end_to_end_workflow():
         assert "body_mask" in meta, "Metadata should contain body_mask info"
         assert "threshold" in meta["body_mask"]
         assert "voxel_counts" in meta["body_mask"]
+        assert meta["clip_values"]["method"] == "absolute_value"
+        assert meta["clip_values"]["min"] == 0.0
+        assert meta["clip_values"]["max"] == 15.0
         print(f"  ✓ Metadata contains body mask info")
         
         # Create split file for dataset

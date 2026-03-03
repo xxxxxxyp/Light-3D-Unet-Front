@@ -18,25 +18,21 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from light_unet.core.config import ConfigManager
 
 
-def clip_and_normalize(image, low_percentile=0.5, high_percentile=99.5, target_range=(0, 1)):
+def clip_and_normalize(image, clip_min=0.0, clip_max=15.0, target_range=(0, 1)):
     """
-    Clip intensity values to percentiles and normalize to target range
+    Clip intensity values to absolute fixed values and normalize to target range
     
     Args:
         image: Input image array
-        low_percentile: Lower percentile for clipping
-        high_percentile: Upper percentile for clipping
+        clip_min: Lower bound for clipping
+        clip_max: Upper bound for clipping
         target_range: Target range for normalization (min, max)
     
     Returns:
         normalized_image: Normalized image
         metadata: Dictionary with clip values and normalization parameters
     """
-    # Calculate clip values
-    clip_min = np.percentile(image, low_percentile)
-    clip_max = np.percentile(image, high_percentile)
-    
-    # Clip values
+    # Clip values using absolute thresholds
     clipped = np.clip(image, clip_min, clip_max)
     
     # Normalize to target range
@@ -50,8 +46,7 @@ def clip_and_normalize(image, low_percentile=0.5, high_percentile=99.5, target_r
         "clip_values": {
             "min": float(clip_min),
             "max": float(clip_max),
-            "low_percentile": low_percentile,
-            "high_percentile": high_percentile
+            "method": "absolute_value"
         },
         "normalization_range": list(target_range)
     }
@@ -240,11 +235,11 @@ def preprocess_case(case_id, raw_dir, processed_dir, config):
         if not np.allclose(spacing, expected_spacing, atol=0.1):
             print(f"Warning: Case {case_id} has spacing {spacing}, expected {expected_spacing}")
         
-        # Apply intensity clipping and normalization
+        # Apply intensity clipping and normalization using absolute values
         normalized_img, intensity_metadata = clip_and_normalize(
             img_data,
-            low_percentile=config["intensity"]["clip_percentile_low"],
-            high_percentile=config["intensity"]["clip_percentile_high"],
+            clip_min=config["intensity"].get("clip_min", 0.0),
+            clip_max=config["intensity"].get("clip_max", 15.0),
             target_range=config["intensity"]["normalization_range"]
         )
         
