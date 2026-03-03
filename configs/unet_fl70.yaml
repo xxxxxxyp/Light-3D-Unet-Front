@@ -72,8 +72,8 @@ data:
   - 144
   - null
   intensity:
-    clip_percentile_high: 99.5
-    clip_percentile_low: 0.5
+    clip_min: 0.0
+    clip_max: 15.0
     normalization_range:
     - 0
     - 1
