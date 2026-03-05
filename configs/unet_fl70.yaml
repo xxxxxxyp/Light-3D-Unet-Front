@@ -50,6 +50,9 @@ augmentation:
     scale_range:
     - 0.9
     - 1.1
+  label_dilation:
+    enabled: true
+    voxels: 1        # 向外膨胀的体素数量，1个体素在Path B下代表各向外扩展4mm
 data:
   bbox_expansion_mm: 10.0
   bbox_expansion_voxels: 3
