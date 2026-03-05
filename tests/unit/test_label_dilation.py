@@ -4,8 +4,32 @@ Focused tests for PatchDataset label dilation augmentation.
 
 import sys
 import numpy as np
+import types
 
-from light_unet.datasets.patch_dataset import PatchDataset
+
+def _load_patch_dataset_class():
+    if "torch" not in sys.modules:
+        fake_torch = types.ModuleType("torch")
+        fake_torch_nn = types.ModuleType("torch.nn")
+        fake_torch_utils = types.ModuleType("torch.utils")
+        fake_torch_utils_data = types.ModuleType("torch.utils.data")
+        fake_torch_utils_data.Dataset = object
+        fake_torch_utils_data.DataLoader = object
+        fake_torch_nn.Module = object
+        fake_torch.device = object
+        fake_torch.nn = fake_torch_nn
+        fake_torch.utils = fake_torch_utils
+        fake_torch_utils.data = fake_torch_utils_data
+        sys.modules["torch"] = fake_torch
+        sys.modules["torch.nn"] = fake_torch_nn
+        sys.modules["torch.utils"] = fake_torch_utils
+        sys.modules["torch.utils.data"] = fake_torch_utils_data
+
+    from light_unet.datasets.patch_dataset import PatchDataset
+    return PatchDataset
+
+
+PatchDataset = _load_patch_dataset_class()
 
 
 def _make_dataset_stub(augmentation):
