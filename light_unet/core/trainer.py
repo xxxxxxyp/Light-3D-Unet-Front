@@ -50,7 +50,7 @@ class Trainer:
             torch.backends.cudnn.benchmark = False
         
         # Setup device
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
         print(f"Using device: {self.device}")
         
         # Create model

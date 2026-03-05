@@ -72,8 +72,8 @@ data:
   - 144
   - null
   intensity:
-    clip_min: 0.0
     clip_max: 15.0
+    clip_min: 0.0
     normalization_range:
     - 0
     - 1
@@ -98,7 +98,7 @@ data:
   volume_threshold:
     inference_cc: 0.5
     train_cc: 0.1
-data_dir: C:\Projects\MedImages\Light-3D-Unet-Front\data\processed
+data_dir: /mnt/data2/xyp/Light-3D-Unet-Front/data/processed
 experiment:
   description: Lightweight 3D-UNet for PET-only lesion candidate recall using FL-70%
     data
@@ -106,14 +106,14 @@ experiment:
   processing_path: B
   seed: 42
 loss:
-  alpha: 0.7
-  beta: 0.3
+  alpha: 0.85
+  beta: 0.15
   combined_loss_weights:
-    bce: 0.2
-    focal_tversky: 0.8
+    bce: 0.3
+    focal_tversky: 0.7
   gamma: 0.75
   name: FocalTverskyLoss
-  use_combined_loss: false
+  use_combined_loss: true
 metrics:
   model_selection:
     primary_metric: lesion_wise_recall
@@ -128,17 +128,17 @@ model:
   activation: LeakyReLU
   dropout_p: 0.1
   encoder_channels:
-  - 16
   - 32
   - 64
   - 128
+  - 256
   groups: 8
   leaky_relu_slope: 0.01
   name: Lightweight3DUNet
   normalization: InstanceNorm3d
   output_activation: Sigmoid
   output_channels: 1
-  start_channels: 16
+  start_channels: 32
   use_depthwise_separable: true
   use_dropout: true
   use_grouped_conv: true
@@ -168,7 +168,7 @@ output:
   save_every_n_epochs: 10
   save_metadata: true
   tensorboard_dir: logs/tensorboard
-splits_dir: C:\Projects\MedImages\Light-3D-Unet-Front\data\splits
+splits_dir: /mnt/data2/xyp/Light-3D-Unet-Front/data/splits
 target_performance:
   description: If not achieved, analyze reasons and provide improvement suggestions
   lesion_wise_recall: 0.8
