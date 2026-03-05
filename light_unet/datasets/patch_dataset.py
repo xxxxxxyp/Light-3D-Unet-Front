@@ -8,7 +8,7 @@ import nibabel as nib
 import torch
 from pathlib import Path
 from torch.utils.data import Dataset
-from scipy.ndimage import rotate, zoom
+from scipy.ndimage import rotate, zoom, generate_binary_structure, binary_dilation
 
 from light_unet.utils import find_case_files
 from .constants import DEFAULT_FL_DOMAIN_CONFIG, DEFAULT_FL_PREFIX_MAX, DEFAULT_DLBCL_PREFIX_MIN, DEFAULT_DLBCL_PREFIX_MAX
@@ -216,6 +216,17 @@ class PatchDataset(Dataset):
                 sigma = self.augmentation["gaussian_noise"].get("sigma", 0.01)
                 noise = np.random.normal(0, sigma, image.shape)
                 image = np.clip(image + noise, 0, 1)
+
+        # 金标准膨胀 (Label Dilation) - 仅针对 Label 操作，强迫模型预测带安全边距的 Mask
+        if self.augmentation.get("label_dilation", {}).get("enabled", False):
+            voxels = self.augmentation["label_dilation"].get("voxels", 1)
+            if voxels > 0:
+                # 使用 3D 十字形结构元素 (6连通)
+                struct_elem = generate_binary_structure(3, 1)
+                # 对 label 进行膨胀，并保持其原本的数据类型 (float32)
+                label_binary = label > 0
+                label_dilated = binary_dilation(label_binary, structure=struct_elem, iterations=voxels)
+                label = label_dilated.astype(np.float32)
         
         return image, label
 
