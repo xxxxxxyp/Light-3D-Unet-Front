@@ -422,14 +422,27 @@ class Trainer:
         
         thresholds = self.config["validation"].get("threshold_sensitivity_range", [default_threshold])
         tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)
+        expansion_voxels = self.config.get("data", {}).get("bbox_expansion_voxels", 3)
         
         best_threshold = thresholds[0]
-        best_metrics = calculate_metrics(all_predictions, all_labels, threshold=best_threshold, spacing=all_spacings)
+        best_metrics = calculate_metrics(
+            all_predictions,
+            all_labels,
+            threshold=best_threshold,
+            spacing=all_spacings,
+            expansion_voxels=expansion_voxels
+        )
         best_recall = best_metrics["lesion_wise_recall"]
         best_dsc_macro = best_metrics["voxel_wise_dsc_macro"]
         
         for threshold in thresholds[1:]:
-            metrics = calculate_metrics(all_predictions, all_labels, threshold=threshold, spacing=all_spacings)
+            metrics = calculate_metrics(
+                all_predictions,
+                all_labels,
+                threshold=threshold,
+                spacing=all_spacings,
+                expansion_voxels=expansion_voxels
+            )
             is_better, _ = self._is_better_metric(metrics["lesion_wise_recall"], metrics["voxel_wise_dsc_macro"], best_recall, best_dsc_macro, tie_threshold)
             
             if is_better:
@@ -510,7 +523,11 @@ class Trainer:
                 # Print
                 print(f"\nEpoch {epoch+1}/{epochs}")
                 print(f"  Train Loss: {train_loss:.4f}")
-                print(f"  Val Recall: {current_recall:.4f}, DSC: {current_dsc_macro:.4f}")
+                print(
+                    f"  Val Recall: {current_recall:.4f}, "
+                    f"BBox Recall: {val_metrics.get('bbox_recall', 0.0):.4f}, "
+                    f"DSC: {current_dsc_macro:.4f}"
+                )
                 
                 # Model Selection
                 tie_threshold = self.config["metrics"]["model_selection"].get("tie_threshold", 0.0)

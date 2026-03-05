@@ -287,6 +287,60 @@ def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
     }
 
 
+def calculate_bbox_recall(prob_map, label, threshold=0.3, expansion_voxels=3):
+    """
+    Simulate post-processing to generate BBoxes and calculate how many ground truth
+    lesions are captured by these expanded BBoxes.
+    """
+    prob_map = np.asarray(prob_map)
+    label = np.asarray(label)
+
+    if prob_map.ndim == 4 and prob_map.shape[0] == 1:
+        prob_map = prob_map[0]
+    if label.ndim == 4 and label.shape[0] == 1:
+        label = label[0]
+
+    # 1. Threshold binarization
+    binary_pred = (prob_map >= threshold).astype(bool)
+
+    # 2. Morphological closing
+    struct_elem = np.ones((3, 3, 3), dtype=bool)
+    binary_pred = ndimage.binary_closing(binary_pred, structure=struct_elem)
+
+    # 3. Extract predicted connected components and get BBox boundaries
+    labeled_pred, _ = ndimage.label(binary_pred)
+    pred_slices = ndimage.find_objects(labeled_pred)
+
+    # Empty mask for expanded BBoxes
+    bbox_mask = np.zeros_like(prob_map, dtype=bool)
+
+    # 4. Expand BBoxes and draw to mask
+    for slices in pred_slices:
+        if slices is None:
+            continue
+        z_slice, y_slice, x_slice = slices
+        z_start = max(0, z_slice.start - expansion_voxels)
+        z_stop = min(prob_map.shape[0], z_slice.stop + expansion_voxels)
+        y_start = max(0, y_slice.start - expansion_voxels)
+        y_stop = min(prob_map.shape[1], y_slice.stop + expansion_voxels)
+        x_start = max(0, x_slice.start - expansion_voxels)
+        x_stop = min(prob_map.shape[2], x_slice.stop + expansion_voxels)
+        bbox_mask[z_start:z_stop, y_start:y_stop, x_start:x_stop] = True
+
+    # 5. Extract GT lesions
+    labeled_gt, num_gt = ndimage.label(label > 0)
+
+    # 6. Calculate BBox recall
+    hits = 0
+    if num_gt > 0:
+        for i in range(1, num_gt + 1):
+            gt_lesion_mask = (labeled_gt == i)
+            if np.any(gt_lesion_mask & bbox_mask):
+                hits += 1
+
+    return hits, num_gt
+
+
 def _normalize_spacing_per_case(spacing, num_cases):
     """Return a spacing list for each case."""
     if num_cases == 0:
@@ -303,7 +357,7 @@ def _normalize_spacing_per_case(spacing, num_cases):
     return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
 
 
-def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACING):
+def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACING, expansion_voxels=3):
     """
     Calculate all metrics for a batch of predictions
     
@@ -312,6 +366,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         labels: Ground truth binary masks [B, 1, D, H, W] or list of arrays
         threshold: Probability threshold
         spacing: Voxel spacing (single tuple or list of tuples per case)
+        expansion_voxels: Number of voxels to expand each predicted BBox edge
     
     Returns:
         metrics: Dictionary with all metrics including:
@@ -319,6 +374,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
             - voxel_wise_dsc_micro (global DSC across all voxels)
             - voxel_wise_dsc_macro (mean of per-case DSC)
             - fp_per_case
+            - bbox_recall (GT lesion hit ratio by expanded predicted BBoxes)
             - tp, fp, fn (lesion counts)
             - Backward compatibility aliases: dsc, recall, precision
     """
@@ -343,6 +399,8 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     total_tp = 0
     total_fp = 0
     total_fn = 0
+    total_bbox_hits = 0
+    total_bbox_gt = 0
     intersection_sum = 0.0
     union_sum = 0.0
     per_case_dsc_list = []
@@ -376,6 +434,15 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         total_fp += lesion_metrics["fp"]
         total_fn += lesion_metrics["fn"]
 
+        bbox_hits, bbox_gt = calculate_bbox_recall(
+            pred_array,
+            target_array,
+            threshold=threshold,
+            expansion_voxels=expansion_voxels
+        )
+        total_bbox_hits += bbox_hits
+        total_bbox_gt += bbox_gt
+
     # Voxel-wise metrics
     voxel_dsc_micro = (2.0 * intersection_sum + SMOOTH) / (union_sum + SMOOTH)
     voxel_dsc_macro = np.mean(per_case_dsc_list) if per_case_dsc_list else 0.0
@@ -394,6 +461,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         "voxel_wise_dsc_micro": voxel_dsc_micro,
         "voxel_wise_dsc_macro": voxel_dsc_macro,
         "fp_per_case": fp_per_case,
+        "bbox_recall": total_bbox_hits / max(1, total_bbox_gt),
         "tp": total_tp,
         "fp": total_fp,
         "fn": total_fn,
