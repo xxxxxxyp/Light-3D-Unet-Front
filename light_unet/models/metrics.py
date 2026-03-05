@@ -366,6 +366,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         labels: Ground truth binary masks [B, 1, D, H, W] or list of arrays
         threshold: Probability threshold
         spacing: Voxel spacing (single tuple or list of tuples per case)
+        expansion_voxels: Number of voxels to expand each predicted BBox edge
     
     Returns:
         metrics: Dictionary with all metrics including:
@@ -373,6 +374,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
             - voxel_wise_dsc_micro (global DSC across all voxels)
             - voxel_wise_dsc_macro (mean of per-case DSC)
             - fp_per_case
+            - bbox_recall (GT lesion hit ratio by expanded predicted BBoxes)
             - tp, fp, fn (lesion counts)
             - Backward compatibility aliases: dsc, recall, precision
     """
