@@ -107,7 +107,8 @@ def load_evaluation_inputs(prob_maps_dir, data_dir, split_file):
 
         predictions.append(prob_map_nii.get_fdata())
         labels.append(label_nii.get_fdata())
-        spacings.append(tuple(float(s) for s in label_nii.header.get_zooms()[:3]) or DEFAULT_SPACING)
+        zooms = tuple(float(s) for s in label_nii.header.get_zooms()[:3])
+        spacings.append(zooms if len(zooms) == 3 else DEFAULT_SPACING)
 
     return predictions, labels, spacings
 

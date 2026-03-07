@@ -11,12 +11,18 @@ import os
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 EVALUATE_PATH = os.path.join(REPO_ROOT, "scripts", "evaluate.py")
 
-spec = importlib.util.spec_from_file_location("evaluate", EVALUATE_PATH)
-evaluate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(evaluate)
+
+def load_evaluate_module():
+    spec = importlib.util.spec_from_file_location("evaluate", EVALUATE_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load evaluate module from {EVALUATE_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_summary_row_includes_bbox_recall():
+    evaluate = load_evaluate_module()
     metrics = {
         "lesion_wise_recall": 0.95,
         "bbox_recall": 0.952,
@@ -35,6 +41,7 @@ def test_summary_row_includes_bbox_recall():
 
 
 def test_printed_summary_and_default_report_include_bbox_recall():
+    evaluate = load_evaluate_module()
     metrics = {
         "lesion_wise_recall": 0.81,
         "bbox_recall": 0.952,
