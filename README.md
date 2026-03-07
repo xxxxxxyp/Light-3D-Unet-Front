@@ -109,7 +109,7 @@ python main.py --mode evaluate
 
 ```
 
-### Export MedSAM2 NPZ Data
+### 3. Export MedSAM2 NPZ Data
 
 Convert processed PET volumes and masks into MedSAM2-compatible `.npz` files:
 
@@ -120,7 +120,7 @@ python scripts/prepare_medsam2_data.py \
   --output_dir data/medsam2_npz
 ```
 
-### 3. Mixed Training (Optional)
+### 4. Mixed Training (Optional)
 
 To enable mixed FL + DLBCL training (using step-based strategy):
 

@@ -19,7 +19,7 @@ from light_unet.utils import find_case_files
 
 
 def transpose_to_dhw(array, source_path):
-    """Transpose a 3D NIfTI array from (X, Y, Z) to (D, H, W)."""
+    """Transpose a 3D NIfTI array from (X, Y, Z)/(H, W, D) to (D, H, W)."""
     array = np.asarray(array)
     if array.ndim != 3:
         raise ValueError(f"Expected a 3D volume, got shape {array.shape} from {source_path}.")
