@@ -109,7 +109,18 @@ python main.py --mode evaluate
 
 ```
 
-### 3. Mixed Training (Optional)
+### 3. Export MedSAM2 NPZ Data
+
+Convert processed PET volumes and masks into MedSAM2-compatible `.npz` files:
+
+```bash
+python scripts/prepare_medsam2_data.py \
+  --data_dir data/processed \
+  --splits_dir data/splits \
+  --output_dir data/medsam2_npz
+```
+
+### 4. Mixed Training (Optional)
 
 To enable mixed FL + DLBCL training (using step-based strategy):
 
@@ -135,4 +146,3 @@ Key hyperparameters are defined in `configs/unet_fl70.yaml`:
 ## License
 
 [To be specified]
-
