@@ -124,7 +124,38 @@ def test_prepare_dataset_writes_train_and_val_npz_files():
         assert np.all(val_payload["gts"] == 0)
 
 
+def test_convert_to_npz_serializes_tp_and_fp_prompt_boxes():
+    prepare = load_prepare_module()
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        tmpdir = Path(tmpdir)
+        img_path = tmpdir / "0003_0000.nii.gz"
+        label_path = tmpdir / "0003.nii.gz"
+        out_path = tmpdir / "0003.npz"
+
+        save_nifti(img_path, np.ones((2, 2, 2), dtype=np.float32))
+        save_nifti(label_path, np.zeros((2, 2, 2), dtype=np.float32))
+
+        prepare.convert_to_npz(
+            img_path,
+            label_path,
+            out_path,
+            clip_min=0.0,
+            clip_max=15.0,
+            case_prompts={
+                "TP": [{"z": 1, "box_2d": [2, 3, 4, 5]}],
+                "FP": [{"z": 0, "box_2d": [5, 6, 7, 8]}],
+            },
+        )
+
+        payload = np.load(out_path)
+
+    np.testing.assert_array_equal(payload["tp_boxes"], np.array([[1, 2, 3, 4, 5]], dtype=np.int16))
+    np.testing.assert_array_equal(payload["fp_boxes"], np.array([[0, 5, 6, 7, 8]], dtype=np.int16))
+
+
 if __name__ == "__main__":
     test_convert_to_npz_transposes_and_quantizes_data()
     test_prepare_dataset_writes_train_and_val_npz_files()
+    test_convert_to_npz_serializes_tp_and_fp_prompt_boxes()
     print("Prepare MedSAM2 data tests passed! ✓")

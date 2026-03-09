@@ -4,6 +4,7 @@ Evaluation script for saved probability maps.
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -80,8 +81,8 @@ def print_evaluation_summary(metrics_by_threshold, default_threshold):
         print(format_default_threshold_report(default_threshold, default_metrics))
 
 
-def load_evaluation_inputs(prob_maps_dir, data_dir, split_file):
-    """Load probability maps, labels, and spacing values for evaluation."""
+def load_evaluation_inputs(prob_maps_dir, data_dir, split_file, return_case_ids=False):
+    """Load probability maps, labels, spacing values, and case ids for evaluation."""
     import nibabel as nib
 
     from light_unet.models.metrics import DEFAULT_SPACING
@@ -90,6 +91,7 @@ def load_evaluation_inputs(prob_maps_dir, data_dir, split_file):
     predictions = []
     labels = []
     spacings = []
+    loaded_case_ids = []
 
     with open(split_file, "r", encoding="utf-8") as handle:
         case_ids = [line.strip() for line in handle if line.strip()]
@@ -109,11 +111,26 @@ def load_evaluation_inputs(prob_maps_dir, data_dir, split_file):
         labels.append(label_nii.get_fdata())
         zooms = tuple(float(s) for s in label_nii.header.get_zooms()[:3])
         spacings.append(zooms if len(zooms) == 3 else DEFAULT_SPACING)
+        loaded_case_ids.append(case_id)
 
+    if return_case_ids:
+        return predictions, labels, spacings, loaded_case_ids
     return predictions, labels, spacings
 
 
-def evaluate_thresholds(predictions, labels, thresholds, spacings, expansion_voxels):
+def load_case_prompts(prompts_json, case_ids):
+    """Load per-case prompt annotations from a JSON export."""
+    if not prompts_json:
+        return None
+
+    prompts_json = Path(prompts_json)
+    with prompts_json.open("r", encoding="utf-8") as handle:
+        prompts_payload = json.load(handle)
+
+    return [prompts_payload.get(case_id, {"TP": [], "FP": []}) for case_id in case_ids]
+
+
+def evaluate_thresholds(predictions, labels, thresholds, spacings, expansion_voxels, case_prompts=None):
     """Evaluate all configured thresholds."""
     from light_unet.models.metrics import calculate_metrics
 
@@ -125,6 +142,7 @@ def evaluate_thresholds(predictions, labels, thresholds, spacings, expansion_vox
             threshold=threshold,
             spacing=spacings,
             expansion_voxels=expansion_voxels,
+            case_prompts=case_prompts,
         )
         results.append((threshold, metrics))
     return results
@@ -169,6 +187,12 @@ def parse_args():
     parser.add_argument("--data_dir", type=str, required=True, help="Processed data directory")
     parser.add_argument("--split_file", type=str, required=True, help="Validation split file")
     parser.add_argument("--output_dir", type=str, required=True, help="Output directory for metrics CSV")
+    parser.add_argument(
+        "--prompts_json",
+        type=str,
+        default=None,
+        help="Optional prompt JSON exported by scripts/export_bboxes.py for slice-wise bbox recall.",
+    )
     return parser.parse_args()
 
 
@@ -180,11 +204,13 @@ def main():
     thresholds = config["validation"].get("threshold_sensitivity_range", [default_threshold])
     expansion_voxels = config.get("data", {}).get("bbox_expansion_voxels", 3)
 
-    predictions, labels, spacings = load_evaluation_inputs(
+    predictions, labels, spacings, case_ids = load_evaluation_inputs(
         prob_maps_dir=args.prob_maps_dir,
         data_dir=args.data_dir,
         split_file=args.split_file,
+        return_case_ids=True,
     )
+    case_prompts = load_case_prompts(args.prompts_json, case_ids)
 
     if not predictions:
         raise RuntimeError("No evaluation cases could be loaded.")
@@ -195,6 +221,7 @@ def main():
         thresholds=thresholds,
         spacings=spacings,
         expansion_voxels=expansion_voxels,
+        case_prompts=case_prompts,
     )
 
     metrics_csv = Path(args.output_dir) / "metrics.csv"
