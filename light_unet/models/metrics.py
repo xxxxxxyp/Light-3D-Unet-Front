@@ -3,6 +3,10 @@ Evaluation Metrics for Lesion Segmentation
 Includes lesion-wise recall, precision, voxel-wise DSC, and FP per case
 """
 
+from __future__ import annotations
+
+from typing import Any, Dict, List, Mapping, Optional, Sequence
+
 import numpy as np
 from scipy import ndimage
 from sklearn.metrics import precision_score, recall_score
@@ -287,11 +291,8 @@ def calculate_lesion_metrics(pred, target, threshold=0.5, min_size_voxels=0,
     }
 
 
-def calculate_bbox_recall(prob_map, label, threshold=0.3, expansion_voxels=3):
-    """
-    Simulate post-processing to generate BBoxes and calculate how many ground truth
-    lesions are captured by these expanded BBoxes.
-    """
+def _calculate_bbox_recall_from_prob_map(prob_map, label, threshold=0.3, expansion_voxels=3):
+    """Legacy bbox recall based on expanded 3D boxes from a probability map."""
     prob_map = np.asarray(prob_map)
     label = np.asarray(label)
 
@@ -341,6 +342,130 @@ def calculate_bbox_recall(prob_map, label, threshold=0.3, expansion_voxels=3):
     return hits, num_gt
 
 
+def _normalize_prompt_entries(case_prompts: Any) -> Dict[str, List[Dict[str, Any]]]:
+    """
+    Normalize prompt annotations to the new slice-wise TP/FP format.
+
+    Supports both the new structure:
+    {
+        "TP": [{"z": 10, "box_2d": [y1, x1, y2, x2]}],
+        "FP": [...]
+    }
+    and the legacy 3D list structure for backward compatibility.
+    """
+    empty_prompts: Dict[str, List[Dict[str, Any]]] = {"TP": [], "FP": []}
+    if case_prompts is None:
+        return empty_prompts
+
+    if isinstance(case_prompts, Mapping):
+        normalized = {"TP": [], "FP": []}
+        for key in ("TP", "FP"):
+            for entry in case_prompts.get(key, []):
+                if not isinstance(entry, Mapping):
+                    continue
+                if "z" not in entry or "box_2d" not in entry:
+                    continue
+                box_2d = [int(value) for value in entry["box_2d"]]
+                if len(box_2d) != 4:
+                    continue
+                normalized[key].append({"z": int(entry["z"]), "box_2d": box_2d})
+        return normalized
+
+    if isinstance(case_prompts, Sequence) and not isinstance(case_prompts, (str, bytes)):
+        normalized = {"TP": [], "FP": []}
+        for entry in case_prompts:
+            if isinstance(entry, Sequence) and not isinstance(entry, (str, bytes)) and len(entry) == 6:
+                z_min, z_max, y_min, y_max, x_min, x_max = [int(value) for value in entry]
+                for z_index in range(z_min, z_max):
+                    normalized["TP"].append(
+                        {"z": z_index, "box_2d": [y_min, x_min, max(y_min, y_max - 1), max(x_min, x_max - 1)]}
+                    )
+        return normalized
+
+    raise TypeError("case_prompts must be a mapping, a sequence of legacy boxes, or None")
+
+
+def _clip_box_to_slice(box_2d, slice_shape):
+    """Clip an inclusive 2D box to the image boundary."""
+    y_min, x_min, y_max, x_max = [int(value) for value in box_2d]
+    y_min = max(0, min(slice_shape[0] - 1, y_min))
+    x_min = max(0, min(slice_shape[1] - 1, x_min))
+    y_max = max(0, min(slice_shape[0] - 1, y_max))
+    x_max = max(0, min(slice_shape[1] - 1, x_max))
+    return y_min, x_min, y_max, x_max
+
+
+def _box_hits_lesion_slice(box_2d, lesion_slice):
+    """Return whether a slice-wise 2D box overlaps the GT lesion pixels on that slice."""
+    if lesion_slice.size == 0:
+        return False
+    y_min, x_min, y_max, x_max = _clip_box_to_slice(box_2d, lesion_slice.shape)
+    if y_min > y_max or x_min > x_max:
+        return False
+    return bool(np.any(lesion_slice[y_min : y_max + 1, x_min : x_max + 1]))
+
+
+def _calculate_bbox_recall_from_prompts(case_prompts, label):
+    """
+    基于新的逐层 2D Prompt 计算 bbox recall。
+
+    对每个 GT 病灶（3D 连通域），只要在它实际存在的某个 Z 切片上，
+    出现一个与该切片病灶区域相交的 TP 2D 框，就认为该病灶被前端成功召回。
+    这样既满足“Z 轴区间内有 TP 框”的要求，也避免把同层但位置错误的框误记为命中。
+    """
+    label = np.asarray(label)
+    if label.ndim == 4 and label.shape[0] == 1:
+        label = label[0]
+
+    normalized_prompts = _normalize_prompt_entries(case_prompts)
+    tp_prompts_by_z: Dict[int, List[List[int]]] = {}
+    for entry in normalized_prompts["TP"]:
+        tp_prompts_by_z.setdefault(int(entry["z"]), []).append([int(value) for value in entry["box_2d"]])
+
+    labeled_gt, num_gt = ndimage.label(label > 0)
+    hits = 0
+
+    for lesion_id in range(1, num_gt + 1):
+        lesion_mask = labeled_gt == lesion_id
+        z_indices = np.where(np.any(lesion_mask, axis=(1, 2)))[0]
+        lesion_hit = False
+
+        for z_index in z_indices:
+            lesion_slice = lesion_mask[z_index]
+            for box_2d in tp_prompts_by_z.get(int(z_index), []):
+                if _box_hits_lesion_slice(box_2d, lesion_slice):
+                    lesion_hit = True
+                    break
+            if lesion_hit:
+                break
+
+        if lesion_hit:
+            hits += 1
+
+    return hits, num_gt
+
+
+def calculate_bbox_recall(case_prompts_or_prob_map, label, threshold=0.3, expansion_voxels=3):
+    """
+    Calculate bbox recall using either:
+    1. the new slice-wise TP/FP prompt JSON structure, or
+    2. the legacy probability-map simulation path.
+    """
+    if isinstance(case_prompts_or_prob_map, Mapping):
+        return _calculate_bbox_recall_from_prompts(case_prompts_or_prob_map, label)
+    if isinstance(case_prompts_or_prob_map, Sequence) and not isinstance(case_prompts_or_prob_map, (str, bytes)):
+        if case_prompts_or_prob_map and isinstance(case_prompts_or_prob_map[0], Mapping):
+            return _calculate_bbox_recall_from_prompts({"TP": list(case_prompts_or_prob_map), "FP": []}, label)
+        if case_prompts_or_prob_map and isinstance(case_prompts_or_prob_map[0], Sequence):
+            return _calculate_bbox_recall_from_prompts(case_prompts_or_prob_map, label)
+    return _calculate_bbox_recall_from_prob_map(
+        case_prompts_or_prob_map,
+        label,
+        threshold=threshold,
+        expansion_voxels=expansion_voxels,
+    )
+
+
 def _normalize_spacing_per_case(spacing, num_cases):
     """Return a spacing list for each case."""
     if num_cases == 0:
@@ -357,7 +482,27 @@ def _normalize_spacing_per_case(spacing, num_cases):
     return [tuple(map(float, DEFAULT_SPACING)) for _ in range(num_cases)]
 
 
-def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACING, expansion_voxels=3):
+def _normalize_case_prompts_per_case(case_prompts: Optional[Any], num_cases: int) -> Optional[List[Any]]:
+    """Return one prompt payload per case when prompt annotations are provided."""
+    if case_prompts is None:
+        return None
+    if isinstance(case_prompts, (list, tuple)):
+        if len(case_prompts) != num_cases:
+            raise ValueError(f"Expected {num_cases} prompt payloads, got {len(case_prompts)}.")
+        return list(case_prompts)
+    if num_cases == 1:
+        return [case_prompts]
+    raise TypeError("case_prompts must be a per-case list/tuple or a single-case prompt payload")
+
+
+def calculate_metrics(
+    predictions,
+    labels,
+    threshold=0.5,
+    spacing=DEFAULT_SPACING,
+    expansion_voxels=3,
+    case_prompts: Optional[Any] = None,
+):
     """
     Calculate all metrics for a batch of predictions
     
@@ -395,6 +540,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
 
     num_cases = len(pred_list)
     spacing_list = _normalize_spacing_per_case(spacing, num_cases)
+    case_prompt_list = _normalize_case_prompts_per_case(case_prompts, num_cases)
 
     total_tp = 0
     total_fp = 0
@@ -405,7 +551,7 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
     union_sum = 0.0
     per_case_dsc_list = []
 
-    for pred, target, spacing_item in zip(pred_list, label_list, spacing_list):
+    for case_index, (pred, target, spacing_item) in enumerate(zip(pred_list, label_list, spacing_list)):
         pred_array = np.asarray(pred)
         target_array = np.asarray(target)
 
@@ -434,12 +580,15 @@ def calculate_metrics(predictions, labels, threshold=0.5, spacing=DEFAULT_SPACIN
         total_fp += lesion_metrics["fp"]
         total_fn += lesion_metrics["fn"]
 
-        bbox_hits, bbox_gt = calculate_bbox_recall(
-            pred_array,
-            target_array,
-            threshold=threshold,
-            expansion_voxels=expansion_voxels
-        )
+        if case_prompt_list is not None:
+            bbox_hits, bbox_gt = calculate_bbox_recall(case_prompt_list[case_index], target_array)
+        else:
+            bbox_hits, bbox_gt = calculate_bbox_recall(
+                pred_array,
+                target_array,
+                threshold=threshold,
+                expansion_voxels=expansion_voxels
+            )
         total_bbox_hits += bbox_hits
         total_bbox_gt += bbox_gt
 

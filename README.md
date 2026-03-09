@@ -117,7 +117,8 @@ Convert processed PET volumes and masks into MedSAM2-compatible `.npz` files:
 python scripts/prepare_medsam2_data.py \
   --data_dir data/processed \
   --splits_dir data/splits \
-  --output_dir data/medsam2_npz
+  --output_dir data/medsam2_npz \
+  --prompts_json inference/prompts.json
 ```
 
 ### 4. Mixed Training (Optional)
